@@ -1,9 +1,21 @@
 "use client"
 
-import { useState, useEffect } from "react"
-import { CalendarIcon, WifiOff } from "lucide-react"
+import { useState } from "react"
+import { CalendarIcon, ChevronDown, ChevronRight } from "lucide-react"
+import { format } from "date-fns"
+import { Line } from "react-chartjs-2"
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend,
+} from "chart.js"
 
-import { useSensorData } from "@/hooks/use-sensor-data"
+import { useRealtimeHistory } from "@/hooks/use-realtime-history"
 import { Button } from "@/components/ui/button"
 import { Calendar } from "@/components/ui/calendar"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -13,24 +25,44 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Skeleton } from "@/components/ui/skeleton"
-import { DeviceExportButton } from "@/components/device-export-button"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
+
+// Register ChartJS components
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend)
 
 // Define parameter thresholds and units
 const parameters = [
-  { name: "pH", unit: "", min: 6.5, max: 8.5 },
-  { name: "BOD", unit: "mg/L", min: 0, max: 30 },
-  { name: "COD", unit: "mg/L", min: 0, max: 250 },
-  { name: "TSS", unit: "mg/L", min: 0, max: 30 },
-  { name: "flow", unit: "m³/h", min: 0, max: 100 },
-  { name: "temperature", unit: "°C", min: 15, max: 35 },
-  { name: "DO", unit: "mg/L", min: 4, max: 8 },
-  { name: "conductivity", unit: "μS/cm", min: 500, max: 1500 },
-  { name: "turbidity", unit: "NTU", min: 0, max: 5 },
+  { name: "PH", unit: "", min: 6.5, max: 8.5, key: "PH" },
+  { name: "BOD", unit: "mg/L", min: 0, max: 30, key: "BOD" },
+  { name: "COD", unit: "mg/L", min: 0, max: 250, key: "COD" },
+  { name: "TSS", unit: "mg/L", min: 0, max: 30, key: "TSS" },
+  { name: "Flow", unit: "m³/h", min: 0, max: 100, key: "Flow" },
 ]
 
+// Chart colors for different parameters
+const chartColors = {
+  PH: "rgb(255, 99, 132)",
+  BOD: "rgb(54, 162, 235)",
+  COD: "rgb(255, 206, 86)",
+  TSS: "rgb(75, 192, 192)",
+  Flow: "rgb(153, 102, 255)",
+}
+
+// Helper function to safely format dates
+const formatDate = (date: Date | string | undefined | null): string => {
+  if (!date) return "N/A"
+  if (date instanceof Date) {
+    return date.toLocaleString()
+  }
+  if (typeof date === "string") {
+    return date
+  }
+  return String(date)
+}
+
 export default function HistoryPage() {
-  const [selectedDevice, setSelectedDevice] = useState<string>("")
+  const [selectedDevice, setSelectedDevice] = useState<string>("RPi001")
   const [selectedParameter, setSelectedParameter] = useState("All Parameters")
   const [dateRange, setDateRange] = useState<{
     from: Date | undefined
@@ -39,35 +71,101 @@ export default function HistoryPage() {
     from: new Date(new Date().setDate(new Date().getDate() - 7)),
     to: new Date(),
   })
+  const [expandedItem, setExpandedItem] = useState<string | null>(null)
 
-  const { devices, historicalData, loading } = useSensorData(selectedDevice)
-
-  // Set the first device as selected when devices are loaded
-  useEffect(() => {
-    if (devices.length > 0 && !selectedDevice) {
-      setSelectedDevice(devices[0].id)
-    }
-  }, [devices, selectedDevice])
+  const { historicalData, loading, error } = useRealtimeHistory(selectedDevice)
 
   // Filter data based on selections
   const filteredData = historicalData.filter((entry) => {
+    const entryDate = entry.timestamp
     const matchesDate =
-      (!dateRange.from || entry.timestamp >= dateRange.from) && (!dateRange.to || entry.timestamp <= dateRange.to)
+      (!dateRange.from || (entryDate && entryDate >= dateRange.from)) &&
+      (!dateRange.to || (entryDate && entryDate <= dateRange.to))
 
     return matchesDate
   })
 
-  const formattedHistoricalData = filteredData.map((entry) => {
-    const formattedEntry: { [key: string]: string | number | boolean } = {
-      Timestamp: entry.timestamp.toLocaleString(),
-    }
+  // Prepare chart data
+  const prepareChartData = () => {
+    if (filteredData.length === 0) return null
 
-    parameters.forEach((param) => {
-      formattedEntry[param.name] = entry[param.name.toLowerCase() as keyof typeof entry] as number
+    // Sort data by timestamp
+    const sortedData = [...filteredData].sort((a, b) => {
+      const aTime = a.timestamp instanceof Date ? a.timestamp.getTime() : 0
+      const bTime = b.timestamp instanceof Date ? b.timestamp.getTime() : 0
+      return aTime - bTime
     })
 
-    return formattedEntry
-  })
+    // Prepare labels (timestamps)
+    const labels = sortedData.map((entry) => {
+      if (entry.timestamp instanceof Date) {
+        return format(entry.timestamp, "yyyy-MM-dd HH:mm:ss")
+      }
+      return String(entry.Timestamp || "Unknown")
+    })
+
+    // If a specific parameter is selected
+    if (selectedParameter !== "All Parameters") {
+      const paramKey = parameters.find((p) => p.name === selectedParameter)?.key || selectedParameter
+      const paramData = sortedData.map((entry) => {
+        const value = entry[paramKey as keyof typeof entry]
+        return typeof value === "number" ? value : 0
+      })
+
+      return {
+        labels,
+        datasets: [
+          {
+            label: selectedParameter,
+            data: paramData,
+            borderColor: chartColors[paramKey as keyof typeof chartColors] || "rgb(75, 192, 192)",
+            backgroundColor: `${chartColors[paramKey as keyof typeof chartColors] || "rgb(75, 192, 192)"}33`,
+            tension: 0.1,
+          },
+        ],
+      }
+    }
+
+    // For all parameters
+    const datasets = parameters.map((param) => {
+      return {
+        label: param.name,
+        data: sortedData.map((entry) => {
+          const value = entry[param.key as keyof typeof entry]
+          return typeof value === "number" ? value : 0
+        }),
+        borderColor: chartColors[param.key as keyof typeof chartColors] || "rgb(75, 192, 192)",
+        backgroundColor: `${chartColors[param.key as keyof typeof chartColors] || "rgb(75, 192, 192)"}33`,
+        tension: 0.1,
+      }
+    })
+
+    return {
+      labels,
+      datasets,
+    }
+  }
+
+  const chartData = prepareChartData()
+
+  const chartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        position: "top" as const,
+      },
+      title: {
+        display: true,
+        text: `Sensor Data History - ${selectedParameter}`,
+      },
+    },
+    scales: {
+      y: {
+        beginAtZero: false,
+      },
+    },
+  }
 
   // Loading state
   if (loading && historicalData.length === 0) {
@@ -100,21 +198,31 @@ export default function HistoryPage() {
     )
   }
 
-  const selectedDeviceObj = devices.find((d) => d.id === selectedDevice) || null
+  if (error) {
+    return (
+      <div className="space-y-6">
+        <h1 className="text-2xl font-bold tracking-tight">Historical Data</h1>
+        <Alert variant="destructive">
+          <AlertTitle>Error</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-bold tracking-tight">Historical Data</h1>
-        {selectedDeviceObj && (
-          <DeviceExportButton
-            device={selectedDeviceObj}
-            data={formattedHistoricalData}
-            dateRange={dateRange.from && dateRange.to ? { from: dateRange.from, to: dateRange.to } : undefined}
-            disabled={loading || !historicalData.length}
-            type="history"
-          />
-        )}
+        <Button
+          variant="outline"
+          onClick={() => {
+            // Refresh data by forcing a re-render
+            setSelectedDevice((prev) => prev)
+          }}
+        >
+          Refresh Data
+        </Button>
       </div>
 
       <Card>
@@ -131,11 +239,7 @@ export default function HistoryPage() {
                   <SelectValue placeholder="Select device" />
                 </SelectTrigger>
                 <SelectContent>
-                  {devices.map((device) => (
-                    <SelectItem key={device.id} value={device.id}>
-                      {device.id} - {device.location}
-                    </SelectItem>
-                  ))}
+                  <SelectItem value="RPi001">RPi001</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -185,11 +289,80 @@ export default function HistoryPage() {
         </CardContent>
       </Card>
 
-      <Tabs defaultValue="table" className="w-full">
-        <TabsList className="grid w-full grid-cols-2">
+      <Tabs defaultValue="list" className="w-full">
+        <TabsList className="grid w-full grid-cols-3">
+          <TabsTrigger value="list">List View</TabsTrigger>
           <TabsTrigger value="table">Table View</TabsTrigger>
           <TabsTrigger value="chart">Chart View</TabsTrigger>
         </TabsList>
+
+        {/* List View - Similar to the screenshots provided */}
+        <TabsContent value="list">
+          <Card>
+            <CardHeader>
+              <CardTitle>Historical Data List</CardTitle>
+              <CardDescription>
+                Showing {filteredData.length} records for {selectedDevice}
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {filteredData.length === 0 ? (
+                <Alert>
+                  <AlertTitle>No data available</AlertTitle>
+                  <AlertDescription>
+                    No historical data found for the selected device and date range. Try adjusting your filters.
+                  </AlertDescription>
+                </Alert>
+              ) : (
+                <div className="space-y-2">
+                  {filteredData.map((entry, index) => {
+                    const entryId = entry.id
+                    const isExpanded = expandedItem === entryId
+
+                    return (
+                      <Collapsible
+                        key={index}
+                        open={isExpanded}
+                        onOpenChange={() => setExpandedItem(isExpanded ? null : entryId)}
+                        className="border rounded-md"
+                      >
+                        <CollapsibleTrigger className="flex w-full items-center justify-between p-4 hover:bg-gray-50 dark:hover:bg-gray-800">
+                          <div className="flex items-center">
+                            <span>{entry.id}</span>
+                          </div>
+                          {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                        </CollapsibleTrigger>
+                        <CollapsibleContent className="border-t p-4">
+                          <div className="grid gap-2 pl-6 border-l-2 border-gray-200 dark:border-gray-700">
+                            {parameters.map((param) => {
+                              const value = entry[param.key as keyof typeof entry]
+                              const numValue = typeof value === "number" ? value : 0
+                              const isLow = numValue < param.min
+                              const isHigh = numValue > param.max
+                              const textColor = isLow ? "text-blue-600" : isHigh ? "text-red-600" : ""
+
+                              return (
+                                <div key={param.name} className="flex justify-between">
+                                  <span>{param.name}:</span>
+                                  <span className={textColor}>{numValue}</span>
+                                </div>
+                              )
+                            })}
+                            <div className="flex justify-between">
+                              <span>Timestamp:</span>
+                              <span>{formatDate(entry.Timestamp)}</span>
+                            </div>
+                          </div>
+                        </CollapsibleContent>
+                      </Collapsible>
+                    )
+                  })}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
         <TabsContent value="table">
           <Card>
             <CardHeader>
@@ -228,26 +401,31 @@ export default function HistoryPage() {
                       </TableHeader>
                       <TableBody>
                         {filteredData.slice(0, 10).map((entry, index) => (
-                          <TableRow key={index} className={entry.isOffline ? "bg-red-50/30 dark:bg-red-950/30" : ""}>
-                            <TableCell>
-                              {entry.isOffline && <WifiOff className="h-3 w-3 text-red-500 inline mr-1" />}
-                              {entry.timestamp.toLocaleString()}
-                            </TableCell>
+                          <TableRow key={index}>
+                            <TableCell>{formatDate(entry.timestamp)}</TableCell>
                             {selectedParameter === "All Parameters" ? (
                               parameters.map((param) => {
-                                const value = entry[param.name.toLowerCase() as keyof typeof entry] as number
-                                const isLow = value < param.min
-                                const isHigh = value > param.max
+                                const value = entry[param.key as keyof typeof entry]
+                                const numValue = typeof value === "number" ? value : 0
+                                const isLow = numValue < param.min
+                                const isHigh = numValue > param.max
                                 const textColor = isLow ? "text-blue-600" : isHigh ? "text-red-600" : ""
 
                                 return (
                                   <TableCell key={param.name} className={textColor}>
-                                    {value}
+                                    {numValue}
                                   </TableCell>
                                 )
                               })
                             ) : (
-                              <TableCell>{entry[selectedParameter.toLowerCase() as keyof typeof entry]}</TableCell>
+                              <TableCell>
+                                {(() => {
+                                  const paramKey = parameters.find((p) => p.name === selectedParameter)?.key
+                                  if (!paramKey) return 0
+                                  const value = entry[paramKey as keyof typeof entry]
+                                  return typeof value === "number" ? value : 0
+                                })()}
+                              </TableCell>
                             )}
                           </TableRow>
                         ))}
@@ -267,6 +445,7 @@ export default function HistoryPage() {
             </CardContent>
           </Card>
         </TabsContent>
+
         <TabsContent value="chart">
           <Card>
             <CardHeader>
@@ -274,9 +453,18 @@ export default function HistoryPage() {
               <CardDescription>Visual representation of historical data</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="h-[400px] w-full rounded-md border border-dashed border-gray-300 bg-gray-50 flex items-center justify-center">
-                <p className="text-sm text-gray-500">Chart visualization would appear here</p>
-              </div>
+              {chartData ? (
+                <div className="h-[400px] w-full">
+                  <Line data={chartData} options={chartOptions} />
+                </div>
+              ) : (
+                <Alert>
+                  <AlertTitle>No data available</AlertTitle>
+                  <AlertDescription>
+                    No historical data found for the selected device and date range. Try adjusting your filters.
+                  </AlertDescription>
+                </Alert>
+              )}
             </CardContent>
           </Card>
         </TabsContent>

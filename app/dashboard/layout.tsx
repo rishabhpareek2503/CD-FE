@@ -101,7 +101,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
               <div className="relative h-8 w-8">
                 <Image src="/images/heepl-logo.png" alt="HEEPL Logo" fill className="object-contain" />
               </div>
-              <span className="hidden md:inline-block text-lg bg-gradient-to-r from-blue-600 to-cyan-500 bg-clip-text text-transparent">
+              <span className="hidden text-lg bg-gradient-to-r from-blue-600 to-cyan-500 bg-clip-text text-transparent">
                 Hitesh Enviro Engineers
               </span>
               <span className="md:hidden text-lg bg-gradient-to-r from-blue-600 to-cyan-500 bg-clip-text text-transparent">
