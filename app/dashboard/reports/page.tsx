@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react"
 import { CalendarIcon, FileText, Printer, Download, RefreshCw, Eye } from "lucide-react"
-import { Chart, type ChartData, type ChartDataset } from "chart.js/auto"
+import { Chart, type ChartData } from "chart.js/auto"
 
 import { useSensorData } from "@/hooks/use-sensor-data"
 import { useRealtimeHistory } from "@/hooks/use-realtime-history"
@@ -60,6 +60,11 @@ interface ToastOptions {
   duration?: number
 }
 
+interface HistoryDataItem {
+  timestamp: string | Date
+  [key: string]: unknown
+}
+
 export default function ReportsPage() {
   const [selectedDevice, setSelectedDevice] = useState("all")
   const [selectedReportType, setSelectedReportType] = useState("daily")
@@ -87,17 +92,7 @@ export default function ReportsPage() {
   const barChartInstance = useRef<Chart | null>(null)
 
   const { devices } = useSensorData()
-  const { historicalData, loading: historyLoading, error: historyError } = useRealtimeHistory("RPi001")
-
-  // Debug historical data
-  useEffect(() => {
-    if (historicalData && historicalData.length > 0) {
-      console.log("Historical data loaded:", historicalData.length, "records")
-      console.log("Sample record:", historicalData[0])
-    } else if (!historyLoading) {
-      console.log("No historical data available")
-    }
-  }, [historicalData, historyLoading])
+  const { data: historyData, loading: historyLoading, error: historyError } = useRealtimeHistory("RPi001")
 
   // Load reports on mount
   useEffect(() => {
@@ -202,48 +197,32 @@ export default function ReportsPage() {
         .reverse()
 
       // Line chart for parameters over time
-      const lineDatasets: ChartDataset<"line", (number | null)[]>[] = selectedParameters.map((param) => {
-        const paramInfo = parameters.find((p) => p.name === param)
-        return {
-          type: "line",
-          label: param,
-          data: data
-            .map((item) => {
-              const value = item[param]
-              return typeof value === "string" ? Number.parseFloat(value) : typeof value === "number" ? value : null
-            })
-            .slice(0, 10)
-            .reverse(),
-          borderColor: paramInfo?.color || "#1a4e7e",
-          backgroundColor: (paramInfo?.color || "#1a4e7e") + "33", // Add transparency
-          tension: 0.3,
-          fill: false,
-        }
-      })
-
-      const lineChartData: ChartData<"line"> = {
+      const lineChartData: ChartData = {
         labels: timestamps,
-        datasets: lineDatasets,
+        datasets: selectedParameters.map((param) => {
+          const paramInfo = parameters.find((p) => p.name === param)
+          return {
+            label: param,
+            data: data
+              .map((item) => item[param])
+              .slice(0, 10)
+              .reverse(),
+            borderColor: paramInfo?.color || "#1a4e7e",
+            backgroundColor: (paramInfo?.color || "#1a4e7e") + "33", // Add transparency
+            tension: 0.3,
+            fill: false,
+          }
+        }),
       }
 
       // Bar chart for average values
-      const barChartData: ChartData<"bar"> = {
+      const barChartData: ChartData = {
         labels: selectedParameters,
         datasets: [
           {
-            type: "bar",
             label: "Average Values",
             data: selectedParameters.map((param) => {
-              const values = data
-                .map((item) => {
-                  const value = item[param]
-                  return typeof value === "string"
-                    ? Number.parseFloat(value)
-                    : typeof value === "number"
-                      ? value
-                      : Number.NaN
-                })
-                .filter((val) => !isNaN(val))
+              const values = data.map((item) => Number.parseFloat(item[param] as string)).filter((val) => !isNaN(val))
               return values.length > 0 ? values.reduce((sum, val) => sum + val, 0) / values.length : 0
             }),
             backgroundColor: selectedParameters.map((param) => {
@@ -261,7 +240,6 @@ export default function ReportsPage() {
         data: lineChartData,
         options: {
           responsive: true,
-          maintainAspectRatio: true,
           plugins: {
             title: {
               display: true,
@@ -299,7 +277,6 @@ export default function ReportsPage() {
         data: barChartData,
         options: {
           responsive: true,
-          maintainAspectRatio: true,
           plugins: {
             title: {
               display: true,
@@ -351,19 +328,15 @@ export default function ReportsPage() {
       let generatedReportData: Record<string, unknown>[] = []
 
       // Use history data if available
-      if (historicalData && historicalData.length > 0) {
-        console.log("Using historical data for report:", historicalData.length, "records")
-
+      if (historyData && historyData.length > 0) {
         // Filter by date range if provided
-        const filteredData = historicalData.filter((item) => {
+        const filteredData = historyData.filter((item: HistoryDataItem) => {
           const itemDate = new Date(item.timestamp)
           return (!dateRange.from || itemDate >= dateRange.from) && (!dateRange.to || itemDate <= dateRange.to)
         })
 
-        console.log("Filtered historical data:", filteredData.length, "records")
-
         // Format the data for the report
-        generatedReportData = filteredData.map((item) => {
+        generatedReportData = filteredData.map((item: HistoryDataItem) => {
           const formattedItem: Record<string, unknown> = {
             Timestamp:
               typeof item.timestamp === "string"
@@ -371,37 +344,15 @@ export default function ReportsPage() {
                 : (item.timestamp as Date).toLocaleString(),
           }
 
-          // Add selected parameters - use case-insensitive matching
+          // Add selected parameters
           selectedParameters.forEach((param) => {
-            // Try different case variations
-            const paramLower = param.toLowerCase()
-            const paramUpper = param.toUpperCase()
-
-            if (item[param] !== undefined) {
-              formattedItem[param] = item[param]
-            } else if (item[paramLower] !== undefined) {
-              formattedItem[param] = item[paramLower]
-            } else if (item[paramUpper] !== undefined) {
-              formattedItem[param] = item[paramUpper]
-            } else {
-              // Special case for pH/PH
-              if (param === "pH" && item.PH !== undefined) {
-                formattedItem[param] = item.PH
-              } else if (param === "PH" && item.pH !== undefined) {
-                formattedItem[param] = item.pH
-              } else {
-                formattedItem[param] = "N/A"
-              }
-            }
+            const paramKey = param.toLowerCase()
+            formattedItem[param] = item[paramKey] !== undefined ? item[paramKey] : "N/A"
           })
 
           return formattedItem
         })
-
-        console.log("Generated report data:", generatedReportData.length, "records")
-        console.log("Sample report item:", generatedReportData[0])
       } else {
-        console.log("No historical data available, generating mock data")
         // Generate mock data if no history data
         generatedReportData = Array.from({ length: 20 }, (_, i) => {
           const date = new Date()
@@ -649,24 +600,6 @@ export default function ReportsPage() {
           </Button>
         </div>
       </div>
-
-      {historyLoading ? (
-        <Alert>
-          <AlertDescription>Loading historical data...</AlertDescription>
-        </Alert>
-      ) : historyError ? (
-        <Alert variant="destructive">
-          <AlertDescription>Error loading historical data: {historyError}</AlertDescription>
-        </Alert>
-      ) : historicalData.length === 0 ? (
-        <Alert>
-          <AlertDescription>No historical data available. Mock data will be used for reports.</AlertDescription>
-        </Alert>
-      ) : (
-        <Alert>
-          <AlertDescription>{historicalData.length} historical records available for reporting.</AlertDescription>
-        </Alert>
-      )}
 
       <Tabs defaultValue="generate" className="w-full">
         <TabsList className="grid w-full grid-cols-2">
@@ -1024,10 +957,10 @@ export default function ReportsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Hidden charts for PDF generation - with larger size for better quality */}
+      {/* Hidden charts for PDF generation */}
       <div className="hidden">
-        <canvas ref={lineChartRef} width="1200" height="600"></canvas>
-        <canvas ref={barChartRef} width="1200" height="600"></canvas>
+        <canvas ref={lineChartRef} width="800" height="400"></canvas>
+        <canvas ref={barChartRef} width="800" height="400"></canvas>
       </div>
     </div>
   )
