@@ -13,6 +13,7 @@ export interface HistoricalReading {
   TSS: number
   Timestamp: string
   timestamp: Date
+  [key: string]: any // Add index signature to allow any other properties
 }
 
 // Helper function to safely parse dates
@@ -32,54 +33,80 @@ export function useRealtimeHistory(deviceId = "RPi001") {
 
   useEffect(() => {
     setLoading(true)
+    setError(null)
 
     const historyRef = ref(realtimeDb, `HMI_Sensor_Data/${deviceId}/History`)
 
-    const unsubscribe = onValue(
-      historyRef,
-      (snapshot) => {
-        if (snapshot.exists()) {
-          const data = snapshot.val()
-          const readings: HistoricalReading[] = []
+    try {
+      const unsubscribe = onValue(
+        historyRef,
+        (snapshot) => {
+          if (snapshot.exists()) {
+            const data = snapshot.val()
+            const readings: HistoricalReading[] = []
 
-          // Convert the object of timestamps to an array of readings
-          Object.keys(data).forEach((timestampKey) => {
-            const reading = data[timestampKey]
-            if (reading) {
-              const timestampStr = reading.Timestamp || timestampKey.replace(/_/g, " ").replace(/-/g, ":")
+            // Convert the object of timestamps to an array of readings
+            Object.keys(data).forEach((timestampKey) => {
+              const reading = data[timestampKey]
+              if (reading) {
+                const timestampStr = reading.Timestamp || timestampKey.replace(/_/g, " ").replace(/-/g, ":")
 
-              readings.push({
-                id: timestampKey,
-                BOD: typeof reading.BOD === "number" ? reading.BOD : 0,
-                COD: typeof reading.COD === "number" ? reading.COD : 0,
-                Flow: typeof reading.Flow === "number" ? reading.Flow : 0,
-                PH: typeof reading.PH === "number" ? reading.PH : 0,
-                TSS: typeof reading.TSS === "number" ? reading.TSS : 0,
-                Timestamp: timestampStr,
-                timestamp: parseDate(timestampStr),
-              })
+                // Create a reading with all properties from the original data
+                const historyReading: HistoricalReading = {
+                  id: timestampKey,
+                  BOD: typeof reading.BOD === "number" ? reading.BOD : 0,
+                  COD: typeof reading.COD === "number" ? reading.COD : 0,
+                  Flow: typeof reading.Flow === "number" ? reading.Flow : 0,
+                  PH: typeof reading.PH === "number" ? reading.PH : 0,
+                  TSS: typeof reading.TSS === "number" ? reading.TSS : 0,
+                  Timestamp: timestampStr,
+                  timestamp: parseDate(timestampStr),
+                  ...reading, // Include all original properties
+                }
+
+                // Also add lowercase versions of the properties for easier access
+                Object.keys(reading).forEach((key) => {
+                  const lowerKey = key.toLowerCase()
+                  if (lowerKey !== key) {
+                    historyReading[lowerKey] = reading[key]
+                  }
+                })
+
+                readings.push(historyReading)
+              }
+            })
+
+            // Sort by timestamp (newest first)
+            readings.sort((a, b) => {
+              return b.timestamp.getTime() - a.timestamp.getTime()
+            })
+
+            console.log(`Loaded ${readings.length} historical readings`)
+            if (readings.length > 0) {
+              console.log("Sample reading:", readings[0])
             }
-          })
 
-          // Sort by timestamp (newest first)
-          readings.sort((a, b) => {
-            return b.timestamp.getTime() - a.timestamp.getTime()
-          })
+            setHistoricalData(readings)
+          } else {
+            console.log("No historical data found")
+            setHistoricalData([])
+          }
+          setLoading(false)
+        },
+        (error) => {
+          console.error("Error fetching historical data:", error)
+          setError("Failed to fetch historical data")
+          setLoading(false)
+        },
+      )
 
-          setHistoricalData(readings)
-        } else {
-          setHistoricalData([])
-        }
-        setLoading(false)
-      },
-      (error) => {
-        console.error("Error fetching historical data:", error)
-        setError("Failed to fetch historical data")
-        setLoading(false)
-      },
-    )
-
-    return () => unsubscribe()
+      return () => unsubscribe()
+    } catch (error) {
+      console.error("Error setting up realtime listener:", error)
+      setError("Failed to set up realtime listener")
+      setLoading(false)
+      return () => {}
+    }
   }, [deviceId])
 
   // Function to get a specific reading by timestamp
@@ -101,6 +128,7 @@ export function useRealtimeHistory(deviceId = "RPi001") {
           TSS: typeof reading.TSS === "number" ? reading.TSS : 0,
           Timestamp: timestampStr,
           timestamp: parseDate(timestampStr),
+          ...reading, // Include all original properties
         }
       }
       return null
