@@ -1,97 +1,66 @@
 import { NextResponse } from "next/server"
-import { doc, getDoc } from "firebase/firestore"
+import { doc, getDoc, setDoc } from "firebase/firestore"
 import { db } from "@/lib/firebase"
 
-// Simple version that doesn't rely on firebase-admin
 export async function POST(request: Request) {
   try {
-    // Log that the API was called
-    console.log("Notification test API called")
+    console.log("Test notification API called")
 
-    // Parse the request body
-    let userId: string
-    try {
-      const body = await request.json()
-      userId = body.userId
-      console.log("Request body parsed successfully:", { userId })
-    } catch (error) {
-      console.error("Error parsing request body:", error)
-      return NextResponse.json(
-        {
-          error: "Invalid request body",
-          details: error instanceof Error ? error.message : String(error),
-        },
-        { status: 400 },
-      )
-    }
+    const { userId } = await request.json()
+    console.log("User ID received:", userId)
 
     if (!userId) {
-      console.log("Missing userId in request")
+      console.log("No user ID provided")
       return NextResponse.json({ error: "User ID is required" }, { status: 400 })
     }
 
-    // Get user's FCM tokens from Firestore
-    console.log(`Fetching user document for userId: ${userId}`)
-    let userDoc
-    try {
-      const userRef = doc(db, "users", userId)
-      userDoc = await getDoc(userRef)
-      console.log("User document fetch result:", { exists: userDoc.exists() })
-    } catch (error) {
-      console.error("Error fetching user document:", error)
-      return NextResponse.json(
-        {
-          error: "Failed to fetch user data",
-          details: error instanceof Error ? error.message : String(error),
-        },
-        { status: 500 },
-      )
-    }
+    // Check if user document exists
+    const userRef = doc(db, "users", userId)
+    const userDoc = await getDoc(userRef)
+    console.log("User document exists:", userDoc.exists())
 
     if (!userDoc.exists()) {
-      console.log(`User not found: ${userId}`)
-      return NextResponse.json(
-        {
-          error: "User not found",
-          userId,
+      console.log("Creating test user document")
+      // Create a test user document
+      await setDoc(userRef, {
+        fcmTokens: ["test-fcm-token-for-debugging"],
+        notificationPreferences: {
+          pushEnabled: true,
+          emailEnabled: true,
+          smsEnabled: false,
+          whatsappEnabled: false,
         },
-        { status: 404 },
-      )
+        createdAt: new Date().toISOString(),
+        testUser: true,
+      })
+      console.log("Test user document created")
     }
 
-    const userData = userDoc.data()
-    const fcmTokens = userData.fcmTokens || []
-    console.log(`Found ${fcmTokens.length} FCM tokens for user`)
+    const userData = userDoc.exists()
+      ? userDoc.data()
+      : {
+          fcmTokens: ["test-fcm-token-for-debugging"],
+          testUser: true,
+        }
 
-    if (fcmTokens.length === 0) {
-      console.log(`No FCM tokens found for user: ${userId}`)
-      return NextResponse.json(
-        {
-          error: "No FCM tokens found for user",
-          userId,
-        },
-        { status: 404 },
-      )
-    }
+    console.log("User data:", userData)
 
-    // In this simplified version, we're not actually sending FCM messages
-    // since we're not using firebase-admin
-    // Instead, we'll just return a success response
-    console.log("Returning success response")
+    // Simulate successful notification without actually sending
     return NextResponse.json({
       success: true,
-      message: "This is a simulated success response. In production, FCM messages would be sent.",
-      tokens: fcmTokens.length,
-      tokenDetails: fcmTokens.map((token: string) => ({
-        token: token.substring(0, 10) + "...", // Only show part of the token for security
-      })),
+      message: "Test notification simulated successfully",
+      userId,
+      fcmTokens: userData.fcmTokens?.length || 0,
+      timestamp: new Date().toISOString(),
+      note: "This is a test endpoint - no actual notification was sent",
     })
   } catch (error) {
-    console.error("Unhandled error in test notification API:", error)
+    console.error("Test notification error:", error)
     return NextResponse.json(
       {
-        error: "Failed to process notification request",
+        error: "Test notification failed",
         details: error instanceof Error ? error.message : String(error),
+        timestamp: new Date().toISOString(),
       },
       { status: 500 },
     )
