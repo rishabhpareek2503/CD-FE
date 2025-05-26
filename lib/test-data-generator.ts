@@ -53,6 +53,11 @@ export async function createRandomTestData(deviceId = "RPi001") {
   }
 }
 
+// Function to create test data for a specific device (alias for createRandomTestData)
+export async function createTestDataForDevice(deviceId: string) {
+  return await createRandomTestData(deviceId)
+}
+
 // Function to simulate real-time data updates for multiple devices
 export function startDataSimulation(deviceIds: string[] = ["RPi001"], intervalMs = 5000) {
   const intervalIds: NodeJS.Timeout[] = []
@@ -88,6 +93,8 @@ if (typeof window !== "undefined" && process.env.NODE_ENV === "development") {
   window.createTestData = createTestData
   // @ts-ignore
   window.createRandomTestData = createRandomTestData
+  // @ts-ignore
+  window.createTestDataForDevice = createTestDataForDevice
   // @ts-ignore
   window.startDataSimulation = startDataSimulation
   // @ts-ignore

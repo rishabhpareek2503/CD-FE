@@ -1,4 +1,4 @@
-import { collection, query, where, getDocs, addDoc, serverTimestamp } from "firebase/firestore"
+import { collection, query, where, getDocs, addDoc, updateDoc, doc, serverTimestamp } from "firebase/firestore"
 import { ref, onValue, off } from "firebase/database"
 import { db, realtimeDb } from "@/lib/firebase"
 import { diagnoseFaults } from "@/lib/fault-diagnosis-service"
@@ -108,6 +108,27 @@ export function stopAutomatedMonitoring(deviceId: string): void {
 
   // Update the tracking object
   delete activeMonitoringSessions[deviceId]
+}
+
+/**
+ * Acknowledge an alert
+ * @param alertId The alert ID to acknowledge
+ * @param userId The user ID acknowledging the alert
+ */
+export async function acknowledgeAlert(alertId: string, userId: string): Promise<boolean> {
+  try {
+    const alertRef = doc(db, "alerts", alertId)
+    await updateDoc(alertRef, {
+      status: "acknowledged",
+      acknowledgedBy: userId,
+      acknowledgedAt: serverTimestamp(),
+    })
+    console.log(`Alert ${alertId} acknowledged by user ${userId}`)
+    return true
+  } catch (error) {
+    console.error("Error acknowledging alert:", error)
+    return false
+  }
 }
 
 /**
