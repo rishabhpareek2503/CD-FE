@@ -1,73 +1,87 @@
 "use client"
 
-import { useEffect, useState } from "react"
-import { collection, onSnapshot, query, where, limit } from "firebase/firestore"
-
+import { useState, useEffect } from "react"
+import {
+  collection,
+  query,
+  orderBy,
+  limit,
+  onSnapshot,
+  where,
+  type Timestamp,
+  type DocumentData,
+} from "firebase/firestore"
 import { db } from "@/lib/firebase"
 
 export interface Alert {
   id: string
   deviceId: string
-  parameter: string
-  value: number
-  threshold: number
-  type: "high" | "low"
-  timestamp: Date
-  status: "active" | "acknowledged" | "resolved"
-  acknowledgedBy?: string
-  acknowledgedAt?: Date
-  resolvedBy?: string
-  resolvedAt?: Date
+  deviceName: string
+  title: string
+  message: string
+  level: "info" | "warning" | "critical"
+  parameters: Record<string, number>
+  conditions: string[]
+  timestamp: Timestamp
+  acknowledged: boolean
+  acknowledgedAt?: Timestamp
 }
 
-export function useAlerts(deviceId?: string) {
+export function useAlerts(deviceId?: string, limitCount = 10) {
   const [alerts, setAlerts] = useState<Alert[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    let q
+    setLoading(true)
+
+    let alertsQuery
 
     if (deviceId) {
-      q = query(collection(db, "alerts"), where("deviceId", "==", deviceId), limit(50))
+      alertsQuery = query(
+        collection(db, "alerts"),
+        where("deviceId", "==", deviceId),
+        orderBy("timestamp", "desc"),
+        limit(limitCount),
+      )
     } else {
-      q = query(collection(db, "alerts"), limit(50))
+      alertsQuery = query(collection(db, "alerts"), orderBy("timestamp", "desc"), limit(limitCount))
     }
 
     const unsubscribe = onSnapshot(
-      q,
+      alertsQuery,
       (snapshot) => {
         const alertsList: Alert[] = []
-        snapshot.forEach((docSnapshot) => {
-          const data = docSnapshot.data()
+        snapshot.forEach((doc) => {
+          const data = doc.data() as DocumentData
           alertsList.push({
-            id: docSnapshot.id,
-            ...data,
-            timestamp: new Date(data.timestamp),
-            acknowledgedAt: data.acknowledgedAt ? new Date(data.acknowledgedAt) : undefined,
-            resolvedAt: data.resolvedAt ? new Date(data.resolvedAt) : undefined,
-          } as Alert)
+            id: doc.id,
+            deviceId: data.deviceId,
+            deviceName: data.deviceName || data.deviceId,
+            title: data.title,
+            message: data.message,
+            level: data.level,
+            parameters: data.parameters || {},
+            conditions: data.conditions || [],
+            timestamp: data.timestamp,
+            acknowledged: data.acknowledged || false,
+            acknowledgedAt: data.acknowledgedAt,
+          })
         })
-
-        // Sort the alerts manually after fetching
-        alertsList.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
 
         setAlerts(alertsList)
         setLoading(false)
+        setError(null)
       },
       (err) => {
         console.error("Error fetching alerts:", err)
-        setError("Failed to fetch alerts")
+        setError(`Failed to fetch alerts: ${err.message}`)
         setLoading(false)
       },
     )
 
     return () => unsubscribe()
-  }, [deviceId])
+  }, [deviceId, limitCount])
 
-  return {
-    alerts,
-    loading,
-    error,
-  }
+  return { alerts, loading, error }
 }

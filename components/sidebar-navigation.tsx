@@ -260,6 +260,15 @@ export function SidebarNavigation() {
                 </SidebarMenuButton>
               </SidebarMenuItem>
 
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={pathname === "/dashboard/alerts"}>
+                  <Link href="/dashboard/alerts">
+                    <AlertCircle className="h-4 w-4 mr-2" />
+                    <span>Alerts</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+
               {hasRole && hasRole(["developer", "admin"]) && (
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild isActive={pathname === "/dashboard/model-training"}>

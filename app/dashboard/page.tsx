@@ -1,31 +1,43 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import type React from "react"
+
+import { useEffect, useState } from "react"
 import Link from "next/link"
+import { useAuth } from "@/providers/auth-provider"
+import { useDeviceSelection } from "@/hooks/use-device-selection"
+import { DeviceSelector } from "@/components/device-selector"
+import { LiveDataDisplay } from "@/components/live-data-display"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Skeleton } from "@/components/ui/skeleton"
+import { Button } from "@/components/ui/button"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
-  AlertTriangle,
-  ArrowRight,
+  Activity,
+  BarChart3,
+  Droplet,
   Factory,
-  PlusCircle,
+  FileText,
+  LayoutDashboard,
   RefreshCw,
   Settings,
-  Zap,
-  Gauge,
-  BarChart3,
+  Thermometer,
+  TestTube,
 } from "lucide-react"
-
-import { useAuth } from "@/providers/auth-provider"
-import { useDevices } from "@/providers/device-provider"
-import { LiveDataDisplay } from "@/components/live-data-display"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
-import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Skeleton } from "@/components/ui/skeleton"
-import { Input } from "@/components/ui/input"
-import { Progress } from "@/components/ui/progress"
 import { initDataVerification } from "@/lib/init-data-verification"
+import { useLiveData } from "@/hooks/use-live-data"
+import { createTestDataForDevice, createTestDataForAllDevices } from "@/lib/test-data-generator"
+
+interface AlertType {
+  id: string
+  deviceId: string
+  parameter: string
+  value: number
+  threshold: number
+  type: "high" | "low"
+  timestamp: Date
+  status: "active" | "acknowledged" | "resolved"
+}
 
 interface PlantStats {
   total: number
@@ -35,14 +47,16 @@ interface PlantStats {
 }
 
 export default function DashboardPage() {
-  const { user, userProfile } = useAuth()
-  const { devices, companies, selectedDevice, selectedCompany, selectDevice, selectCompany } = useDevices()
+  const { user } = useAuth()
+  const { selectedDeviceId, selectedDevice, availableDevices, selectDevice } = useDeviceSelection()
 
+  const [alerts, setAlerts] = useState<AlertType[]>([])
   const [plantStats, setPlantStats] = useState<PlantStats>({ total: 0, active: 0, inactive: 0, delayed: 0 })
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
-  const [showDeviceSelector, setShowDeviceSelector] = useState(false)
+  const [generatingTestData, setGeneratingTestData] = useState(false)
   const [initialized, setInitialized] = useState(false)
+  const [activeTab, setActiveTab] = useState("overview")
 
   // Initialize data verification once on client
   useEffect(() => {
@@ -58,12 +72,16 @@ export default function DashboardPage() {
 
     const fetchPlantStats = async () => {
       try {
-        // For simplicity, we'll use hardcoded stats
+        // Calculate stats based on available devices
+        const onlineDevices = availableDevices.filter((device) => device.status === "online").length
+        const offlineDevices = availableDevices.filter((device) => device.status === "offline").length
+        const maintenanceDevices = availableDevices.filter((device) => device.status === "maintenance").length
+
         setPlantStats({
-          total: devices.length || 1,
-          active: devices.filter((d) => d.status === "online").length || 1,
-          inactive: devices.filter((d) => d.status === "offline").length || 0,
-          delayed: devices.filter((d) => d.status === "maintenance").length || 0,
+          total: availableDevices.length,
+          active: onlineDevices,
+          inactive: offlineDevices,
+          delayed: maintenanceDevices,
         })
         setLoading(false)
       } catch (err) {
@@ -73,13 +91,39 @@ export default function DashboardPage() {
     }
 
     fetchPlantStats()
-  }, [user, devices])
+  }, [user, availableDevices])
 
-  // Handle manual refresh
+  // Handle manual refresh - this will just refresh the UI, not generate test data
   const handleRefresh = () => {
     setRefreshing(true)
-    // In a real app, you might want to force a refresh of the data
+    // Just refresh the UI components, don't generate test data
     setTimeout(() => setRefreshing(false), 1000)
+  }
+
+  // Handle test data generation separately
+  const handleGenerateTestData = async () => {
+    setGeneratingTestData(true)
+    try {
+      await createTestDataForAllDevices()
+      console.log("Test data generated for all devices")
+    } catch (error) {
+      console.error("Error generating test data:", error)
+    } finally {
+      setTimeout(() => setGeneratingTestData(false), 1000)
+    }
+  }
+
+  // Handle test data generation for selected device only
+  const handleGenerateTestDataForDevice = async (deviceId: string) => {
+    setGeneratingTestData(true)
+    try {
+      await createTestDataForDevice(deviceId)
+      console.log(`Test data generated for device ${deviceId}`)
+    } catch (error) {
+      console.error("Error generating test data:", error)
+    } finally {
+      setTimeout(() => setGeneratingTestData(false), 1000)
+    }
   }
 
   // Loading state
@@ -104,382 +148,391 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="space-y-8">
-      {/* Header Section */}
-      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+    <div className="container mx-auto py-6">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight bg-gradient-to-r from-blue-600 to-cyan-500 bg-clip-text text-transparent">
+          <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-cyan-500 bg-clip-text text-transparent">
             Wastewater Monitoring Dashboard
           </h1>
-          <p className="text-gray-500 dark:text-gray-400 mt-1">Welcome back, {userProfile?.name || "Client"}</p>
+          <p className="text-gray-500 mt-1">Real-time monitoring of wastewater treatment parameters</p>
         </div>
         <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleRefresh}
-            disabled={refreshing}
-            className="border-primary/20 hover:bg-primary/10"
-          >
+          <Button variant="outline" size="sm" onClick={handleRefresh} disabled={refreshing}>
             <RefreshCw className={`mr-2 h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
-            Refresh
+            {refreshing ? "Refreshing..." : "Refresh"}
           </Button>
           <Button
             variant="outline"
             size="sm"
-            className="border-primary/20 hover:bg-primary/10"
-            onClick={() => setShowDeviceSelector(!showDeviceSelector)}
+            onClick={handleGenerateTestData}
+            disabled={generatingTestData}
+            className="bg-amber-50 hover:bg-amber-100 border-amber-200"
           >
-            <Gauge className="mr-2 h-4 w-4" />
-            {showDeviceSelector ? "Hide Device Selector" : "Select Device"}
+            <TestTube className={`mr-2 h-4 w-4 ${generatingTestData ? "animate-spin" : ""}`} />
+            {generatingTestData ? "Generating..." : "Generate Test Data"}
+          </Button>
+          <Button variant="outline" size="sm" asChild>
+            <Link href="/dashboard/devices">
+              <Settings className="mr-2 h-4 w-4" />
+              Manage Devices
+            </Link>
           </Button>
         </div>
       </div>
 
-      {/* Plant Statistics Section */}
-      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
-        <Card className="border-2 border-blue-200 dark:border-blue-800 shadow-md overflow-hidden">
-          <CardContent className="p-6 bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-950 dark:to-blue-900">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-blue-600 dark:text-blue-400">Total Plants</p>
-                <h3 className="text-3xl font-bold text-blue-700 dark:text-blue-300 mt-1">{plantStats.total}</h3>
-              </div>
-              <div className="h-12 w-12 rounded-full bg-blue-100 dark:bg-blue-800 flex items-center justify-center shadow-inner">
-                <Factory className="h-6 w-6 text-blue-600 dark:text-blue-400" />
-              </div>
-            </div>
-            <div className="mt-4">
-              <Progress
-                value={plantStats.total > 0 ? 100 : 0}
-                className="h-2 bg-blue-200 dark:bg-blue-700"
-                indicatorClassName="bg-blue-600 dark:bg-blue-400"
-              />
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-2 border-green-200 dark:border-green-800 shadow-md overflow-hidden">
-          <CardContent className="p-6 bg-gradient-to-br from-green-50 to-green-100 dark:from-green-950 dark:to-green-900">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-green-600 dark:text-green-400">Active Plants</p>
-                <h3 className="text-3xl font-bold text-green-700 dark:text-green-300 mt-1">{plantStats.active}</h3>
-              </div>
-              <div className="h-12 w-12 rounded-full bg-green-100 dark:bg-green-800 flex items-center justify-center shadow-inner">
-                <Zap className="h-6 w-6 text-green-600 dark:text-green-400" />
-              </div>
-            </div>
-            <div className="mt-4">
-              <Progress
-                value={plantStats.total > 0 ? (plantStats.active / plantStats.total) * 100 : 0}
-                className="h-2 bg-green-200 dark:bg-green-700"
-                indicatorClassName="bg-green-600 dark:bg-green-400"
-              />
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-2 border-amber-200 dark:border-amber-800 shadow-md overflow-hidden">
-          <CardContent className="p-6 bg-gradient-to-br from-amber-50 to-amber-100 dark:from-amber-950 dark:to-amber-900">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-amber-600 dark:text-amber-400">Inactive Plants</p>
-                <h3 className="text-3xl font-bold text-amber-700 dark:text-amber-300 mt-1">{plantStats.inactive}</h3>
-              </div>
-              <div className="h-12 w-12 rounded-full bg-amber-100 dark:bg-amber-800 flex items-center justify-center shadow-inner">
-                <Settings className="h-6 w-6 text-amber-600 dark:text-amber-400" />
-              </div>
-            </div>
-            <div className="mt-4">
-              <Progress
-                value={plantStats.total > 0 ? (plantStats.inactive / plantStats.total) * 100 : 0}
-                className="h-2 bg-amber-200 dark:bg-amber-700"
-                indicatorClassName="bg-amber-600 dark:bg-amber-400"
-              />
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-2 border-red-200 dark:border-red-800 shadow-md overflow-hidden">
-          <CardContent className="p-6 bg-gradient-to-br from-red-50 to-red-100 dark:from-red-950 dark:to-red-900">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-red-600 dark:text-red-400">Delayed Plants</p>
-                <h3 className="text-3xl font-bold text-red-700 dark:text-red-300 mt-1">{plantStats.delayed}</h3>
-              </div>
-              <div className="h-12 w-12 rounded-full bg-red-100 dark:bg-red-800 flex items-center justify-center shadow-inner">
-                <AlertTriangle className="h-6 w-6 text-red-600 dark:text-red-400" />
-              </div>
-            </div>
-            <div className="mt-4">
-              <Progress
-                value={plantStats.total > 0 ? (plantStats.delayed / plantStats.total) * 100 : 0}
-                className="h-2 bg-red-200 dark:bg-red-700"
-                indicatorClassName="bg-red-600 dark:bg-red-400"
-              />
-            </div>
-          </CardContent>
-        </Card>
+      {/* Device Selection */}
+      <div className="mb-6">
+        <DeviceSelector
+          selectedDeviceId={selectedDeviceId}
+          availableDevices={availableDevices}
+          onDeviceSelect={selectDevice}
+          selectedDevice={selectedDevice}
+        />
       </div>
 
-      {/* Device Selection Section - Conditionally Rendered */}
-      {showDeviceSelector && (
-        <Card className="border-2 border-primary/20 shadow-lg overflow-hidden animated-gradient">
-          <CardHeader className="bg-gradient-to-r from-blue-50 to-cyan-50 dark:from-blue-950 dark:to-cyan-950">
-            <div className="flex justify-between items-center">
-              <div>
-                <CardTitle className="flex items-center">
-                  <Gauge className="mr-2 h-5 w-5 text-primary" />
-                  Device Selection
+      <Tabs defaultValue="overview" value={activeTab} onValueChange={setActiveTab} className="mb-6">
+        <TabsList className="grid grid-cols-3 md:w-[400px]">
+          <TabsTrigger value="overview">
+            <LayoutDashboard className="h-4 w-4 mr-2" />
+            Overview
+          </TabsTrigger>
+          <TabsTrigger value="parameters">
+            <Activity className="h-4 w-4 mr-2" />
+            Parameters
+          </TabsTrigger>
+          <TabsTrigger value="devices">
+            <Factory className="h-4 w-4 mr-2" />
+            All Devices
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="overview" className="mt-6">
+          {/* Stats Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
+            <Card className="bg-gradient-to-br from-blue-50 to-cyan-50 dark:from-blue-950 dark:to-cyan-950 border-blue-200 dark:border-blue-800">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium flex items-center">
+                  <Factory className="h-4 w-4 mr-2 text-blue-500" />
+                  Total Devices
                 </CardTitle>
-                <CardDescription>Select a company and device to monitor</CardDescription>
-              </div>
-              <Button variant="outline" size="sm" asChild className="border-primary/20 hover:bg-primary/10">
-                <Link href="/dashboard/devices">
-                  <PlusCircle className="mr-2 h-4 w-4" />
-                  Add Device
-                </Link>
-              </Button>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{plantStats.total}</div>
+              </CardContent>
+            </Card>
+            <Card className="bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-950 dark:to-emerald-950 border-green-200 dark:border-green-800">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium flex items-center">
+                  <Activity className="h-4 w-4 mr-2 text-green-500" />
+                  Active Devices
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-green-600">{plantStats.active}</div>
+              </CardContent>
+            </Card>
+            <Card className="bg-gradient-to-br from-red-50 to-rose-50 dark:from-red-950 dark:to-rose-950 border-red-200 dark:border-red-800">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium flex items-center">
+                  <Activity className="h-4 w-4 mr-2 text-red-500" />
+                  Inactive Devices
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-red-600">{plantStats.inactive}</div>
+              </CardContent>
+            </Card>
+            <Card className="bg-gradient-to-br from-amber-50 to-yellow-50 dark:from-amber-950 dark:to-yellow-950 border-amber-200 dark:border-amber-800">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium flex items-center">
+                  <FileText className="h-4 w-4 mr-2 text-amber-500" />
+                  Maintenance Due
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-amber-600">{plantStats.delayed}</div>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Main Dashboard */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Main sensor data for selected device */}
+            <div className="lg:col-span-2">
+              <Card className="border-2 border-primary/20 shadow-md overflow-hidden">
+                <CardHeader className="bg-gradient-to-r from-blue-50 to-cyan-50 dark:from-blue-950 dark:to-cyan-950">
+                  <CardTitle className="flex items-center justify-between">
+                    <div className="flex items-center">
+                      <BarChart3 className="h-5 w-5 mr-2 text-blue-500" />
+                      Live Sensor Readings - {selectedDevice?.name}
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleGenerateTestDataForDevice(selectedDeviceId)}
+                      disabled={generatingTestData}
+                      className="bg-amber-50 hover:bg-amber-100 border-amber-200"
+                    >
+                      <TestTube className={`mr-1 h-3 w-3 ${generatingTestData ? "animate-spin" : ""}`} />
+                      Test Data
+                    </Button>
+                  </CardTitle>
+                  <CardDescription>
+                    Real-time monitoring of key wastewater parameters from {selectedDevice?.location}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="p-6">
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-6">
+                    <ParameterCard
+                      deviceId={selectedDeviceId}
+                      parameter="pH"
+                      icon={<Droplet className="h-5 w-5 text-blue-500" />}
+                    />
+                    <ParameterCard
+                      deviceId={selectedDeviceId}
+                      parameter="BOD"
+                      icon={<Activity className="h-5 w-5 text-green-500" />}
+                    />
+                    <ParameterCard
+                      deviceId={selectedDeviceId}
+                      parameter="COD"
+                      icon={<Activity className="h-5 w-5 text-orange-500" />}
+                    />
+                    <ParameterCard
+                      deviceId={selectedDeviceId}
+                      parameter="TSS"
+                      icon={<BarChart3 className="h-5 w-5 text-purple-500" />}
+                    />
+                    <ParameterCard
+                      deviceId={selectedDeviceId}
+                      parameter="flow"
+                      icon={<Thermometer className="h-5 w-5 text-red-500" />}
+                    />
+                  </div>
+                </CardContent>
+              </Card>
             </div>
-          </CardHeader>
-          <CardContent className="grid gap-6 p-6 md:grid-cols-3">
-            <div className="space-y-2">
-              <Label htmlFor="company" className="flex items-center gap-2">
-                <Factory className="h-4 w-4 text-primary" />
-                Company
-              </Label>
-              <Select value={selectedCompany?.id || ""} onValueChange={(value) => selectCompany(value)}>
-                <SelectTrigger id="company" className="border-primary/20">
-                  <SelectValue placeholder="Select company" />
-                </SelectTrigger>
-                <SelectContent>
-                  {companies.map((company) => (
-                    <SelectItem key={company.id} value={company.id}>
-                      {company.name}
-                    </SelectItem>
+
+            {/* Device status */}
+            <div>
+              <Card className="border-2 border-primary/20 shadow-md overflow-hidden h-full">
+                <CardHeader className="bg-gradient-to-r from-blue-50 to-cyan-50 dark:from-blue-950 dark:to-cyan-950">
+                  <CardTitle className="flex items-center">
+                    <Factory className="h-5 w-5 mr-2 text-blue-500" />
+                    Device Status
+                  </CardTitle>
+                  <CardDescription>Current status of all monitoring devices</CardDescription>
+                </CardHeader>
+                <CardContent className="p-6">
+                  {availableDevices.map((device) => (
+                    <div key={device.id} className="mb-4">
+                      <Card
+                        className={`hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors cursor-pointer ${
+                          selectedDeviceId === device.id ? "ring-2 ring-blue-500" : ""
+                        }`}
+                        onClick={() => selectDevice(device.id)}
+                      >
+                        <CardContent className="p-4">
+                          <div className="flex justify-between items-center">
+                            <div>
+                              <h3 className="font-medium">{device.name}</h3>
+                              <p className="text-sm text-gray-500">ID: {device.id}</p>
+                              <p className="text-xs text-gray-400">{device.location}</p>
+                            </div>
+                            <div className="flex flex-col items-end gap-2">
+                              <div className="flex items-center">
+                                <span
+                                  className={`inline-block w-3 h-3 rounded-full mr-2 ${
+                                    device.status === "online"
+                                      ? "bg-green-500"
+                                      : device.status === "offline"
+                                        ? "bg-red-500"
+                                        : "bg-amber-500"
+                                  }`}
+                                ></span>
+                                <span
+                                  className={`text-sm font-medium ${
+                                    device.status === "online"
+                                      ? "text-green-500"
+                                      : device.status === "offline"
+                                        ? "text-red-500"
+                                        : "text-amber-500"
+                                  }`}
+                                >
+                                  {device.status.charAt(0).toUpperCase() + device.status.slice(1)}
+                                </span>
+                              </div>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  handleGenerateTestDataForDevice(device.id)
+                                }}
+                                disabled={generatingTestData}
+                                className="text-xs px-2 py-1 h-6"
+                              >
+                                <TestTube className="h-3 w-3 mr-1" />
+                                Test
+                              </Button>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    </div>
                   ))}
-                </SelectContent>
-              </Select>
+                  <Button className="w-full mt-4" variant="outline" asChild>
+                    <Link href="/dashboard/devices">View All Devices</Link>
+                  </Button>
+                </CardContent>
+              </Card>
             </div>
+          </div>
+        </TabsContent>
 
-            <div className="space-y-2">
-              <Label htmlFor="device-id" className="flex items-center gap-2">
-                <Gauge className="h-4 w-4 text-primary" />
-                Device ID
-              </Label>
-              <Select
-                value={selectedDevice?.id || ""}
-                onValueChange={(value) => selectDevice(value)}
-                disabled={!selectedCompany}
-              >
-                <SelectTrigger id="device-id" className="border-primary/20">
-                  <SelectValue placeholder="Select device ID" />
-                </SelectTrigger>
-                <SelectContent>
-                  {devices
-                    .filter((device) => !selectedCompany || device.companyId === selectedCompany.id)
-                    .map((device) => (
-                      <SelectItem key={device.id} value={device.id}>
-                        {device.id} - {device.name}
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
-            </div>
+        <TabsContent value="parameters" className="mt-6">
+          <LiveDataDisplay
+            deviceId={selectedDeviceId}
+            title={`${selectedDevice?.name} - Live Data`}
+            className="h-full"
+            showDeviceInfo={true}
+          />
+        </TabsContent>
 
-            <div className="space-y-2">
-              <Label htmlFor="serial-number" className="flex items-center gap-2">
-                <Settings className="h-4 w-4 text-primary" />
-                Serial Number
-              </Label>
-              <Input
-                id="serial-number"
-                value={selectedDevice?.serialNumber || ""}
-                disabled
-                className="bg-muted border-primary/20"
-              />
-            </div>
-          </CardContent>
-          <CardFooter className="bg-gradient-to-r from-blue-50 to-cyan-50 dark:from-blue-950 dark:to-cyan-950 flex justify-between">
-            <p className="text-xs text-gray-500 dark:text-gray-400">
-              {selectedDevice ? "Device selected" : "No device selected"}
-            </p>
-            {selectedDevice && (
-              <Button variant="outline" size="sm" asChild className="border-primary/20 hover:bg-primary/10">
-                <Link href={`/dashboard/devices/${selectedDevice.id}`}>
-                  View Device Details
-                  <ArrowRight className="ml-2 h-4 w-4" />
-                </Link>
-              </Button>
-            )}
-          </CardFooter>
-        </Card>
-      )}
-
-      {/* Main Content Section */}
-      <div className="grid gap-6 md:grid-cols-12">
-        {/* Left Column - Device Info */}
-        <div className="md:col-span-4 space-y-6">
-          {/* Device Information Card */}
-          {selectedDevice ? (
-            <Card className="border-2 border-primary/20 shadow-lg overflow-hidden">
-              <CardHeader className="bg-gradient-to-r from-blue-50 to-cyan-50 dark:from-blue-950 dark:to-cyan-950">
-                <CardTitle className="flex items-center">
-                  <Gauge className="mr-2 h-5 w-5 text-primary" />
-                  {selectedDevice.name}
-                </CardTitle>
-                <CardDescription>Device Information</CardDescription>
-              </CardHeader>
-              <CardContent className="pt-6">
-                <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Device ID</p>
-                      <p className="font-medium">{selectedDevice.id}</p>
+        <TabsContent value="devices" className="mt-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {availableDevices.map((device) => (
+              <Card key={device.id} className="border-2 border-primary/20 shadow-md overflow-hidden">
+                <CardHeader className="bg-gradient-to-r from-blue-50 to-cyan-50 dark:from-blue-950 dark:to-cyan-950">
+                  <CardTitle>{device.name}</CardTitle>
+                  <CardDescription>Device ID: {device.id}</CardDescription>
+                </CardHeader>
+                <CardContent className="p-6">
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <p className="text-sm text-gray-500">Status</p>
+                        <p
+                          className={`font-medium ${
+                            device.status === "online"
+                              ? "text-green-500"
+                              : device.status === "offline"
+                                ? "text-red-500"
+                                : "text-amber-500"
+                          }`}
+                        >
+                          {device.status.charAt(0).toUpperCase() + device.status.slice(1)}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-500">Location</p>
+                        <p className="font-medium">{device.location}</p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-500">Last Maintenance</p>
+                        <p className="font-medium">{new Date(device.lastMaintenance).toLocaleDateString()}</p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-500">Installation Date</p>
+                        <p className="font-medium">{new Date(device.installationDate).toLocaleDateString()}</p>
+                      </div>
                     </div>
-                    <div className="space-y-2">
-                      <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Serial Number</p>
-                      <p className="font-medium">{selectedDevice.serialNumber}</p>
-                    </div>
-                    <div className="space-y-2">
-                      <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Location</p>
-                      <p className="font-medium">{selectedDevice.location}</p>
-                    </div>
-                    <div className="space-y-2">
-                      <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Status</p>
-                      <p className="font-medium flex items-center">
-                        <span className="mr-2 h-2 w-2 rounded-full bg-green-600"></span>
-                        Online
-                      </p>
+                    <div className="flex justify-end space-x-2 mt-4">
+                      <Button variant="outline" size="sm" onClick={() => selectDevice(device.id)}>
+                        Select Device
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleGenerateTestDataForDevice(device.id)}
+                        disabled={generatingTestData}
+                        className="bg-amber-50 hover:bg-amber-100 border-amber-200"
+                      >
+                        <TestTube className="h-3 w-3 mr-1" />
+                        Test Data
+                      </Button>
+                      <Button variant="outline" size="sm" asChild>
+                        <Link href={`/dashboard/devices/${device.id}`}>View Details</Link>
+                      </Button>
                     </div>
                   </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </TabsContent>
+      </Tabs>
+    </div>
+  )
+}
 
-                  <div className="space-y-2">
-                    <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Installation Date</p>
-                    <p className="font-medium">{selectedDevice.installationDate.toLocaleDateString()}</p>
-                  </div>
+// Parameter Card Component
+function ParameterCard({ deviceId, parameter, icon }: { deviceId: string; parameter: string; icon: React.ReactNode }) {
+  const { liveReading, loading, error } = useLiveData(deviceId)
 
-                  <div className="space-y-2">
-                    <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Last Maintenance</p>
-                    <p className="font-medium">{selectedDevice.lastMaintenance.toLocaleDateString()}</p>
-                  </div>
-                </div>
-              </CardContent>
-              <CardFooter className="bg-gradient-to-r from-blue-50 to-cyan-50 dark:from-blue-950 dark:to-cyan-950">
-                <Button variant="outline" size="sm" className="w-full border-primary/20 hover:bg-primary/10" asChild>
-                  <Link href={`/dashboard/devices/${selectedDevice.id}`}>
-                    View Device Details
-                    <ArrowRight className="ml-2 h-4 w-4" />
-                  </Link>
-                </Button>
-              </CardFooter>
-            </Card>
-          ) : (
-            <Card className="border-2 border-primary/20 shadow-lg overflow-hidden">
-              <CardHeader className="bg-gradient-to-r from-blue-50 to-cyan-50 dark:from-blue-950 dark:to-cyan-950">
-                <CardTitle>Device Information</CardTitle>
-                <CardDescription>Select a device to view details</CardDescription>
-              </CardHeader>
-              <CardContent className="flex flex-col items-center justify-center py-12 text-center">
-                <Gauge className="h-16 w-16 text-gray-300 dark:text-gray-600 mb-4" />
-                <h3 className="text-lg font-medium">No Device Selected</h3>
-                <p className="text-sm text-gray-500 dark:text-gray-400 mt-2 max-w-xs">
-                  Please select a device using the device selector to view its information and parameters
-                </p>
-                <Button
-                  className="mt-6 bg-gradient-to-r from-blue-600 to-cyan-500 hover:from-blue-700 hover:to-cyan-600"
-                  onClick={() => setShowDeviceSelector(true)}
-                >
-                  <Gauge className="mr-2 h-4 w-4" />
-                  Select Device
-                </Button>
-              </CardContent>
-            </Card>
-          )}
+  // Get parameter value
+  const value = liveReading && typeof liveReading[parameter] === "number" ? (liveReading[parameter] as number) : null
 
-          {/* Default Device Card */}
-          <Card className="border-2 border-primary/20 shadow-lg overflow-hidden">
-            <CardHeader className="bg-gradient-to-r from-blue-50 to-cyan-50 dark:from-blue-950 dark:to-cyan-950">
-              <CardTitle className="flex items-center">
-                <Gauge className="mr-2 h-5 w-5 text-primary" />
-                Default Device
-              </CardTitle>
-              <CardDescription>RPi001 - Always Available</CardDescription>
-            </CardHeader>
-            <CardContent className="pt-6">
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Device ID</p>
-                    <p className="font-medium">RPi001</p>
-                  </div>
-                  <div className="space-y-2">
-                    <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Location</p>
-                    <p className="font-medium">Main Treatment Plant</p>
-                  </div>
-                  <div className="space-y-2">
-                    <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Status</p>
-                    <p className="font-medium flex items-center">
-                      <span className="mr-2 h-2 w-2 rounded-full bg-green-600"></span>
-                      Online
-                    </p>
-                  </div>
-                </div>
+  // Get parameter label
+  const getLabel = () => {
+    switch (parameter) {
+      case "pH":
+        return "pH"
+      case "BOD":
+        return "BOD (mg/L)"
+      case "COD":
+        return "COD (mg/L)"
+      case "TSS":
+        return "TSS (mg/L)"
+      case "flow":
+        return "Flow Rate (m³/h)"
+      case "temperature":
+        return "Temperature (°C)"
+      default:
+        return parameter
+    }
+  }
 
-                <Alert className="bg-blue-50 border-blue-200 text-blue-800 dark:bg-blue-900/30 dark:border-blue-800 dark:text-blue-300">
-                  <AlertTitle>Default Test Device</AlertTitle>
-                  <AlertDescription>
-                    This device is always available for testing and will show live data from the
-                    HMI_Sensor_Data/RPi001/Live path.
-                  </AlertDescription>
-                </Alert>
-              </div>
-            </CardContent>
-            <CardFooter className="bg-gradient-to-r from-blue-50 to-cyan-50 dark:from-blue-950 dark:to-cyan-950">
-              <Button variant="outline" size="sm" className="w-full border-primary/20 hover:bg-primary/10">
-                View Documentation
-                <ArrowRight className="ml-2 h-4 w-4" />
-              </Button>
-            </CardFooter>
-          </Card>
+  // Get status color
+  const getStatusColor = () => {
+    if (value === null) return "bg-gray-200 dark:bg-gray-700"
+
+    switch (parameter) {
+      case "pH":
+        return value < 6.5 || value > 8.5 ? "bg-red-500" : "bg-green-500"
+      case "BOD":
+        return value > 30 ? "bg-red-500" : "bg-green-500"
+      case "COD":
+        return value > 250 ? "bg-red-500" : "bg-green-500"
+      case "TSS":
+        return value > 100 ? "bg-red-500" : "bg-green-500"
+      case "temperature":
+        return value < 15 || value > 35 ? "bg-red-500" : "bg-green-500"
+      default:
+        return "bg-blue-500"
+    }
+  }
+
+  // Format value
+  const formattedValue = value !== null ? (parameter === "pH" ? value.toFixed(1) : Math.round(value).toString()) : "N/A"
+
+  return (
+    <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4 border border-gray-200 dark:border-gray-700">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center">
+          {icon}
+          <h3 className="font-medium ml-2">{getLabel()}</h3>
         </div>
-
-        {/* Right Column - Data Display */}
-        <div className="md:col-span-8 space-y-6">
-          {/* Live Data Display - Only show selected device or RPi001 as fallback */}
-          {selectedDevice ? (
-            <LiveDataDisplay deviceId={selectedDevice.id} title={`${selectedDevice.name} Sensor Data`} />
-          ) : (
-            <LiveDataDisplay deviceId="RPi001" title="Sensor Data" />
-          )}
-
-          {/* Additional content area */}
-          <Card className="border-2 border-primary/20 shadow-lg overflow-hidden h-full">
-            <CardHeader className="bg-gradient-to-r from-blue-50 to-cyan-50 dark:from-blue-950 dark:to-cyan-950">
-              <CardTitle>Parameter Analysis</CardTitle>
-              <CardDescription>Historical data and trends</CardDescription>
-            </CardHeader>
-            <CardContent className="flex flex-col items-center justify-center py-16 text-center">
-              <BarChart3 className="h-24 w-24 text-gray-300 dark:text-gray-600 mb-6" />
-              <h3 className="text-xl font-medium">Historical Data Coming Soon</h3>
-              <p className="text-sm text-gray-500 dark:text-gray-400 mt-2 max-w-md">
-                This section will display historical trends and analysis for the selected device parameters
-              </p>
-              <div className="flex gap-4 mt-8">
-                <Button className="bg-gradient-to-r from-blue-600 to-cyan-500 hover:from-blue-700 hover:to-cyan-600">
-                  <BarChart3 className="mr-2 h-4 w-4" />
-                  View Trends
-                </Button>
-                <Button variant="outline" className="border-primary/20 hover:bg-primary/10">
-                  <RefreshCw className="mr-2 h-4 w-4" />
-                  Update Data
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+        <div className={`w-3 h-3 rounded-full ${getStatusColor()}`}></div>
       </div>
+
+      {loading ? (
+        <div className="animate-pulse h-8 bg-gray-200 dark:bg-gray-700 rounded"></div>
+      ) : error ? (
+        <div className="text-red-500 text-sm">Error loading data</div>
+      ) : (
+        <div className="text-2xl font-bold">{formattedValue}</div>
+      )}
     </div>
   )
 }
