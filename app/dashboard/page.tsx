@@ -17,6 +17,7 @@ import {
 import { useAuth } from "@/providers/auth-provider"
 import { useDevices } from "@/providers/device-provider"
 import { LiveDataDisplay } from "@/components/live-data-display"
+import { ParameterAnalysis } from "@/components/parameter-analysis"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
@@ -318,33 +319,28 @@ export default function DashboardPage() {
       )}
 
       {/* Main Content Section */}
-      <div className="grid gap-6 md:grid-cols-12">
-        {/* Left Column - Device Info */}
-        <div className="md:col-span-4 space-y-6">
-          {/* Device Information Card */}
-          {selectedDevice ? (
-            <Card className="border-2 border-primary/20 shadow-lg overflow-hidden">
+      <div className="space-y-6">
+        <div className="grid gap-6 md:grid-cols-12">
+          {/* Left Column - Default Device Card */}
+          <div className="md:col-span-4">
+            <Card className="border-2 border-primary/20 shadow-lg overflow-hidden h-full flex flex-col">
               <CardHeader className="bg-gradient-to-r from-blue-50 to-cyan-50 dark:from-blue-950 dark:to-cyan-950">
                 <CardTitle className="flex items-center">
                   <Gauge className="mr-2 h-5 w-5 text-primary" />
-                  {selectedDevice.name}
+                  Default Device
                 </CardTitle>
-                <CardDescription>Device Information</CardDescription>
+                <CardDescription>RPi001 - Always Available</CardDescription>
               </CardHeader>
-              <CardContent className="pt-6">
+              <CardContent className="pt-6 flex-1">
                 <div className="space-y-4">
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Device ID</p>
-                      <p className="font-medium">{selectedDevice.id}</p>
-                    </div>
-                    <div className="space-y-2">
-                      <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Serial Number</p>
-                      <p className="font-medium">{selectedDevice.serialNumber}</p>
+                      <p className="font-medium">RPi001</p>
                     </div>
                     <div className="space-y-2">
                       <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Location</p>
-                      <p className="font-medium">{selectedDevice.location}</p>
+                      <p className="font-medium">Main Treatment Plant</p>
                     </div>
                     <div className="space-y-2">
                       <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Status</p>
@@ -355,127 +351,58 @@ export default function DashboardPage() {
                     </div>
                   </div>
 
-                  <div className="space-y-2">
-                    <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Installation Date</p>
-                    <p className="font-medium">{selectedDevice.installationDate.toLocaleDateString()}</p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Last Maintenance</p>
-                    <p className="font-medium">{selectedDevice.lastMaintenance.toLocaleDateString()}</p>
-                  </div>
+                  <Alert className="bg-blue-50 border-blue-200 text-blue-800 dark:bg-blue-900/30 dark:border-blue-800 dark:text-blue-300">
+                    <AlertTitle>Default Test Device</AlertTitle>
+                    <AlertDescription className="text-sm">
+                      This device is always available for testing and will show live data from the
+                      HMI_Sensor_Data/RPi001/Live path.
+                    </AlertDescription>
+                  </Alert>
                 </div>
               </CardContent>
               <CardFooter className="bg-gradient-to-r from-blue-50 to-cyan-50 dark:from-blue-950 dark:to-cyan-950">
-                <Button variant="outline" size="sm" className="w-full border-primary/20 hover:bg-primary/10" asChild>
-                  <Link href={`/dashboard/devices/${selectedDevice.id}`}>
-                    View Device Details
-                    <ArrowRight className="ml-2 h-4 w-4" />
-                  </Link>
+                <Button variant="outline" size="sm" className="w-full border-primary/20 hover:bg-primary/10">
+                  View Documentation
+                  <ArrowRight className="ml-2 h-4 w-4" />
                 </Button>
               </CardFooter>
             </Card>
-          ) : (
-            <Card className="border-2 border-primary/20 shadow-lg overflow-hidden">
-              <CardHeader className="bg-gradient-to-r from-blue-50 to-cyan-50 dark:from-blue-950 dark:to-cyan-950">
-                <CardTitle>Device Information</CardTitle>
-                <CardDescription>Select a device to view details</CardDescription>
-              </CardHeader>
-              <CardContent className="flex flex-col items-center justify-center py-12 text-center">
-                <Gauge className="h-16 w-16 text-gray-300 dark:text-gray-600 mb-4" />
-                <h3 className="text-lg font-medium">No Device Selected</h3>
-                <p className="text-sm text-gray-500 dark:text-gray-400 mt-2 max-w-xs">
-                  Please select a device using the device selector to view its information and parameters
-                </p>
-                <Button
-                  className="mt-6 bg-gradient-to-r from-blue-600 to-cyan-500 hover:from-blue-700 hover:to-cyan-600"
-                  onClick={() => setShowDeviceSelector(true)}
-                >
-                  <Gauge className="mr-2 h-4 w-4" />
-                  Select Device
-                </Button>
-              </CardContent>
-            </Card>
-          )}
+          </div>
 
-          {/* Default Device Card */}
-          <Card className="border-2 border-primary/20 shadow-lg overflow-hidden">
-            <CardHeader className="bg-gradient-to-r from-blue-50 to-cyan-50 dark:from-blue-950 dark:to-cyan-950">
-              <CardTitle className="flex items-center">
-                <Gauge className="mr-2 h-5 w-5 text-primary" />
-                Default Device
-              </CardTitle>
-              <CardDescription>RPi001 - Always Available</CardDescription>
-            </CardHeader>
-            <CardContent className="pt-6">
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Device ID</p>
-                    <p className="font-medium">RPi001</p>
-                  </div>
-                  <div className="space-y-2">
-                    <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Location</p>
-                    <p className="font-medium">Main Treatment Plant</p>
-                  </div>
-                  <div className="space-y-2">
-                    <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Status</p>
-                    <p className="font-medium flex items-center">
-                      <span className="mr-2 h-2 w-2 rounded-full bg-green-600"></span>
-                      Online
-                    </p>
-                  </div>
-                </div>
-
-                <Alert className="bg-blue-50 border-blue-200 text-blue-800 dark:bg-blue-900/30 dark:border-blue-800 dark:text-blue-300">
-                  <AlertTitle>Default Test Device</AlertTitle>
-                  <AlertDescription>
-                    This device is always available for testing and will show live data from the
-                    HMI_Sensor_Data/RPi001/Live path.
-                  </AlertDescription>
-                </Alert>
-              </div>
-            </CardContent>
-            <CardFooter className="bg-gradient-to-r from-blue-50 to-cyan-50 dark:from-blue-950 dark:to-cyan-950">
-              <Button variant="outline" size="sm" className="w-full border-primary/20 hover:bg-primary/10">
-                View Documentation
-                <ArrowRight className="ml-2 h-4 w-4" />
-              </Button>
-            </CardFooter>
-          </Card>
+          {/* Right Column - Data Display */}
+          <div className="md:col-span-8">
+            {/* Live Data Display - Only show selected device or RPi001 as fallback */}
+            <div className="h-full">
+              {selectedDevice ? (
+                <LiveDataDisplay deviceId={selectedDevice.id} title={`${selectedDevice.name} Sensor Data`} />
+              ) : (
+                <LiveDataDisplay deviceId="RPi001" title="Sensor Data" />
+              )}
+            </div>
+          </div>
         </div>
 
-        {/* Right Column - Data Display */}
-        <div className="md:col-span-8 space-y-6">
-          {/* Live Data Display - Only show selected device or RPi001 as fallback */}
-          {selectedDevice ? (
-            <LiveDataDisplay deviceId={selectedDevice.id} title={`${selectedDevice.name} Sensor Data`} />
-          ) : (
-            <LiveDataDisplay deviceId="RPi001" title="Sensor Data" />
-          )}
-
-          {/* Additional content area */}
-          <Card className="border-2 border-primary/20 shadow-lg overflow-hidden h-full">
+        {/* Full Width Parameter Analysis Section */}
+        <div className="w-full">
+          <Card className="border-2 border-primary/20 shadow-lg overflow-hidden">
             <CardHeader className="bg-gradient-to-r from-blue-50 to-cyan-50 dark:from-blue-950 dark:to-cyan-950">
-              <CardTitle>Parameter Analysis</CardTitle>
-              <CardDescription>Historical data and trends</CardDescription>
-            </CardHeader>
-            <CardContent className="flex flex-col items-center justify-center py-16 text-center">
-              <BarChart3 className="h-24 w-24 text-gray-300 dark:text-gray-600 mb-6" />
-              <h3 className="text-xl font-medium">Historical Data Coming Soon</h3>
-              <p className="text-sm text-gray-500 dark:text-gray-400 mt-2 max-w-md">
-                This section will display historical trends and analysis for the selected device parameters
-              </p>
-              <div className="flex gap-4 mt-8">
-                <Button className="bg-gradient-to-r from-blue-600 to-cyan-500 hover:from-blue-700 hover:to-cyan-600">
-                  <BarChart3 className="mr-2 h-4 w-4" />
-                  View Trends
-                </Button>
-                <Button variant="outline" className="border-primary/20 hover:bg-primary/10">
+              <div className="flex justify-between items-center">
+                <div>
+                  <CardTitle>Parameter Analysis</CardTitle>
+                  <CardDescription>Historical data and trends for {selectedDevice?.name || 'Default Device'}</CardDescription>
+                </div>
+                <Button 
+                  variant="outline" 
+                  className="border-primary/20 hover:bg-primary/10"
+                  onClick={() => window.location.reload()}
+                >
                   <RefreshCw className="mr-2 h-4 w-4" />
-                  Update Data
+                  Refresh Data
                 </Button>
               </div>
+            </CardHeader>
+            <CardContent className="p-6">
+              <ParameterAnalysis deviceId={selectedDevice?.id || 'RPi001'} />
             </CardContent>
           </Card>
         </div>

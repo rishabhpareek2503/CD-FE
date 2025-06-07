@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { CalendarIcon, ChevronDown, ChevronRight } from "lucide-react"
+import { CalendarIcon, ChevronDown, ChevronRight, RefreshCw } from "lucide-react"
 import { format } from "date-fns"
 import { Line } from "react-chartjs-2"
 import {
@@ -67,9 +67,10 @@ export default function HistoryPage() {
   const [dateRange, setDateRange] = useState<{
     from: Date | undefined
     to: Date | undefined
-  }>({
-    from: new Date(new Date().setDate(new Date().getDate() - 7)),
-    to: new Date(),
+  }>(() => {
+    const from = new Date(2025, 4, 1); // May 1, 2025 (months are 0-indexed)
+    const to = new Date(2025, 4, 31, 23, 59, 59, 999); // May 31, 2025, 23:59:59.999
+    return { from, to };
   })
   const [expandedItem, setExpandedItem] = useState<string | null>(null)
 
@@ -77,12 +78,37 @@ export default function HistoryPage() {
 
   // Filter data based on selections
   const filteredData = historicalData.filter((entry) => {
-    const entryDate = entry.timestamp
-    const matchesDate =
-      (!dateRange.from || (entryDate && entryDate >= dateRange.from)) &&
-      (!dateRange.to || (entryDate && entryDate <= dateRange.to))
-
-    return matchesDate
+    try {
+      let entryDate = entry.timestamp;
+      
+      // If timestamp is a string, try to parse it
+      if (typeof entryDate === 'string') {
+        entryDate = new Date(entryDate);
+      }
+      
+      // If we still don't have a valid date, try using the Timestamp field
+      if (!(entryDate instanceof Date) || isNaN(entryDate.getTime())) {
+        entryDate = new Date(entry.Timestamp);
+      }
+      
+      // If we still don't have a valid date, include the entry to be safe
+      if (!(entryDate instanceof Date) || isNaN(entryDate.getTime())) {
+        console.warn('Could not parse date for entry:', entry);
+        return true;
+      }
+      
+      // Check if the date is within the selected range
+      const from = dateRange.from ? new Date(dateRange.from.setHours(0, 0, 0, 0)) : null;
+      const to = dateRange.to ? new Date(dateRange.to.setHours(23, 59, 59, 999)) : null;
+      
+      const isAfterFrom = !from || entryDate >= from;
+      const isBeforeTo = !to || entryDate <= to;
+      
+      return isAfterFrom && isBeforeTo;
+    } catch (error) {
+      console.error('Error filtering entry:', entry, error);
+      return false; // Exclude entries with invalid dates
+    }
   })
 
   // Prepare chart data
@@ -168,6 +194,7 @@ export default function HistoryPage() {
   }
 
   // Loading state
+  // Show loading state only on initial load
   if (loading && historicalData.length === 0) {
     return (
       <div className="space-y-6">
@@ -198,13 +225,30 @@ export default function HistoryPage() {
     )
   }
 
+  // Show error state if there's an error
   if (error) {
     return (
-      <div className="space-y-6">
-        <h1 className="text-2xl font-bold tracking-tight">Historical Data</h1>
+      <div className="space-y-6 p-4">
+        <div className="flex justify-between items-center">
+          <h1 className="text-2xl font-bold tracking-tight">Historical Data</h1>
+          <Button
+            variant="outline"
+            onClick={() => {
+              // Force re-fetch by updating the device ID
+              setSelectedDevice(prev => prev === 'RPi001' ? 'RPi001' : 'RPi001')
+            }}
+          >
+            Retry
+          </Button>
+        </div>
         <Alert variant="destructive">
-          <AlertTitle>Error</AlertTitle>
-          <AlertDescription>{error}</AlertDescription>
+          <AlertTitle>Error Loading Data</AlertTitle>
+          <AlertDescription className="space-y-2">
+            <p>{error}</p>
+            <p className="text-sm text-muted-foreground">
+              Please check your internet connection and make sure you have permission to access this data.
+            </p>
+          </AlertDescription>
         </Alert>
       </div>
     )
@@ -213,15 +257,31 @@ export default function HistoryPage() {
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold tracking-tight">Historical Data</h1>
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Historical Data</h1>
+          <p className="text-sm text-muted-foreground">
+            {loading ? 'Loading...' : `Showing ${filteredData.length} records`}
+          </p>
+        </div>
         <Button
           variant="outline"
           onClick={() => {
-            // Refresh data by forcing a re-render
-            setSelectedDevice((prev) => prev)
+            // Force re-fetch by updating the device ID
+            setSelectedDevice(prev => prev === 'RPi001' ? 'RPi001' : 'RPi001')
           }}
+          disabled={loading}
         >
-          Refresh Data
+          {loading ? (
+            <>
+              <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+              Refreshing...
+            </>
+          ) : (
+            <>
+              <RefreshCw className="mr-2 h-4 w-4" />
+              Refresh Data
+            </>
+          )}
         </Button>
       </div>
 
@@ -350,7 +410,25 @@ export default function HistoryPage() {
                             })}
                             <div className="flex justify-between">
                               <span>Timestamp:</span>
-                              <span>{formatDate(entry.Timestamp)}</span>
+                              <span>
+                                {(() => {
+                                  try {
+                                    // Try to format the timestamp
+                                    const timestamp = entry.timestamp || entry.Timestamp;
+                                    if (timestamp instanceof Date) {
+                                      return format(timestamp, 'yyyy-MM-dd HH:mm:ss');
+                                    } else if (typeof timestamp === 'string') {
+                                      return format(new Date(timestamp), 'yyyy-MM-dd HH:mm:ss');
+                                    } else if (entry.Timestamp) {
+                                      return String(entry.Timestamp);
+                                    }
+                                    return 'N/A';
+                                  } catch (e) {
+                                    console.error('Error formatting timestamp:', e);
+                                    return 'Invalid date';
+                                  }
+                                })()}
+                              </span>
                             </div>
                           </div>
                         </CollapsibleContent>

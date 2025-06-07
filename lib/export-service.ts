@@ -117,69 +117,107 @@ export class DataExportService {
     reportType: string,
     format: ExportFormat,
     options?: {
-      deviceId?: string
-      dateRange?: { from: Date; to: Date }
-      parameters?: string[]
-      chartData?: {
-        canvas?: HTMLCanvasElement
-        title?: string
-        description?: string
-      }[]
-    },
+      deviceId?: string;
+      dateRange?: { from: Date; to: Date };
+    }
   ): void {
-    const date = new Date().toISOString().split("T")[0]
-    const filename = `${reportType.toLowerCase().replace(/\s+/g, "-")}-report-${date}`
-    const title = `${reportType} Report`
-
-    let subtitle = `Generated on ${new Date().toLocaleString()}`
-    if (options?.deviceId) {
-      subtitle += `\nDevice ID: ${options.deviceId}`
+    const filename = `historical-data-${new Date().toISOString().split('T')[0]}`;
+    
+    if (format === 'pdf') {
+      this.exportToPDF(data, { 
+        filename,
+        title: 'Historical Data Report',
+        orientation: 'landscape'
+      });
+    } else if (format === 'excel') {
+      this.exportToExcel(data, filename);
+    } else if (format === 'csv') {
+      this.exportToCSV(data, filename);
     }
-    if (options?.dateRange) {
-      subtitle += `\nDate Range: ${options.dateRange.from.toLocaleDateString()} to ${options.dateRange.to.toLocaleDateString()}`
-    }
-    if (options?.parameters && options.parameters.length > 0) {
-      subtitle += `\nParameters: ${options.parameters.join(", ")}`
-    }
-
-    this.exportData(data, format, {
-      filename,
-      title,
-      subtitle,
-      orientation: reportType.includes("Compliance") ? "portrait" : "landscape",
-      companyInfo: {
-        name: "HEEPL Wastewater Monitoring",
-        address: "HEEPL Headquarters, Industrial Area, Phase 1",
-        contact: "Phone: +91-XXX-XXX-XXXX | Email: info@heepl.com",
-        website: "www.heepl.com",
-      },
-      chartData: options?.chartData,
-    })
   }
 
   private static exportToPDF(data: Record<string, unknown>[], options: ExportOptions): void {
     try {
-      // Create a new jsPDF instance
-      const doc = new jsPDF({
-        orientation: options.orientation || "portrait",
-        unit: "pt",
-        format: "a4",
-      })
+      // Import jspdf-autotable dynamically to ensure it's available
+      import('jspdf-autotable').then((autoTableModule) => {
+        // Create a new jsPDF instance with landscape orientation
+        const doc = new jsPDF({
+          orientation: 'landscape',
+          unit: 'pt',
+          format: 'a4'
+        });
 
-      // Add company header
-      this.addCompanyHeader(doc, options)
+        // Simple header
+        doc.setFontSize(16);
+        doc.setTextColor(26, 78, 126); // HEEPL blue
+        doc.setFont('helvetica', 'bold');
+        doc.text('Historical Data Report', 40, 40);
 
-      // Add charts if available
-      const yPos = this.addCharts(doc, options)
+        // Add timestamp
+        doc.setFontSize(10);
+        doc.setTextColor(100, 100, 100);
+        doc.text(`Generated on: ${new Date().toLocaleString()}`, 40, 60);
 
-      // Add data table
-      this.addDataTable(doc, data, options, yPos)
+        // Prepare data for the table
+        if (data.length === 0) {
+          doc.setFontSize(12);
+          doc.setTextColor(100, 100, 100);
+          doc.text('No data available for the selected criteria', 40, 100);
+          doc.save(options.filename ? `${options.filename}.pdf` : 'historical-data.pdf');
+          return;
+        }
 
-      // Save the PDF
-      doc.save(`${options.filename || "data-export"}.pdf`)
+        const headers = Object.keys(data[0]);
+        const tableData = data.map(row => Object.values(row));
+
+        // Add the table using the imported autoTable function
+        autoTableModule.default(doc, {
+          head: [headers],
+          body: tableData,
+          headStyles: {
+            fillColor: [26, 78, 126],
+            textColor: [255, 255, 255],
+            fontStyle: 'bold',
+            halign: 'center',
+            valign: 'middle',
+            fontSize: 10,
+            cellPadding: 6
+          },
+          bodyStyles: {
+            fillColor: [255, 255, 255],
+            textColor: [0, 0, 0],
+            lineWidth: 0.1,
+            lineColor: [200, 200, 200],
+            fontSize: 9,
+            cellPadding: 4,
+            font: 'helvetica'
+          },
+          alternateRowStyles: {
+            0: { 
+              fillColor: [245, 245, 245],
+              textColor: [0, 0, 0]
+            }
+          },
+          margin: { top: 80, left: 40, right: 40 },
+          startY: 80,
+          theme: 'grid',
+          styles: {
+            overflow: 'linebreak',
+            cellWidth: 'wrap',
+            lineColor: [200, 200, 200],
+            lineWidth: 0.1
+          }
+        });
+
+        // Save the PDF
+        doc.save(options.filename ? `${options.filename}.pdf` : 'historical-data.pdf');
+      }).catch(error => {
+        console.error('Error loading jspdf-autotable:', error);
+        throw new Error('Failed to load PDF generation library. Please try again.');
+      });
     } catch (error) {
-      console.error("Error generating PDF:", error)
-      throw new Error("Failed to generate PDF. Please try again.")
+      console.error('Error generating PDF:', error);
+      throw new Error('Failed to generate PDF. Please try again.');
     }
   }
 
@@ -334,7 +372,13 @@ export class DataExportService {
       const margin = 40
       const pageWidth = doc.internal.pageSize.getWidth()
 
-      // Add data table section title with colored background
+      // Ensure we have data to display
+      if (data.length === 0) {
+        doc.setFontSize(12)
+        doc.setTextColor(100, 100, 100)
+        doc.text("No data available for the selected criteria", pageWidth / 2, startY + 30, { align: "center" })
+        return
+      }
       doc.setFillColor(240, 245, 250) // Light blue background
       doc.rect(margin - 10, startY - 15, pageWidth - margin * 2 + 20, 30, "F")
 
@@ -351,12 +395,13 @@ export class DataExportService {
       // Define table styles for a more attractive table
       const headerStyles = {
         fillColor: [26, 78, 126], // HEEPL blue
-        textColor: [255, 255, 255],
-        fontStyle: "bold",
-        halign: "center",
-        valign: "middle",
+        textColor: [255, 255, 255], // White text for header
+        fontStyle: 'bold',
+        halign: 'center',
+        valign: 'middle',
         fontSize: 10,
         cellPadding: 8,
+        font: 'helvetica'
       }
 
       const bodyStyles = {
@@ -364,12 +409,24 @@ export class DataExportService {
         cellPadding: 6,
         lineWidth: 0.1,
         lineColor: [220, 220, 220],
-        textColor: [50, 50, 50],
+        textColor: [0, 0, 0], // Black text for table body
+        font: 'helvetica',
+        fontStyle: 'normal',
+        overflow: 'linebreak',
+        cellWidth: 'wrap',
+        valign: 'middle',
+        fillColor: [26, 78, 126] // White background for cells
       }
 
       const alternateRowStyles = {
-        0: { fillColor: [245, 250, 255] }, // Light blue for even rows
-        1: { fillColor: [255, 255, 255] }, // White for odd rows
+        0: { 
+          fillColor: [51, 102, 153], // Light blue for even rows
+          textColor: [255, 255, 255] // Black text
+        },
+        1: { 
+          fillColor: [26, 78, 126], // White for odd rows
+          textColor: [255, 255, 255] // Black text
+        }
       }
 
       // Enhanced table styling
@@ -431,7 +488,19 @@ export class DataExportService {
       doc.autoTable({
         head: [headers],
         body: tableData,
-        ...tableStyles,
+        startY: startY,
+        margin: { left: margin, right: margin },
+        headStyles: headerStyles,
+        bodyStyles: bodyStyles,
+        alternateRowStyles: alternateRowStyles,
+        styles: {
+          textColor: [0, 0, 0], // Force black text
+          font: 'helvetica',
+          fontSize: 9,
+          cellPadding: 6,
+          lineWidth: 0.1,
+          lineColor: [220, 220, 220]
+        },
       })
     } catch (error) {
       console.error("Error generating table:", error)

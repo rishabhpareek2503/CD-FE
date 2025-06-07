@@ -1,11 +1,22 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
-import { CalendarIcon, FileText, Printer, Download, RefreshCw, Eye } from "lucide-react"
+import { CalendarIcon, FileText, Printer, Download, RefreshCw, Eye, AlertCircle } from "lucide-react"
 import { Chart, type ChartData } from "chart.js/auto"
 
 import { useSensorData } from "@/hooks/use-sensor-data"
 import { useRealtimeHistory } from "@/hooks/use-realtime-history"
+
+interface HistoricalReading {
+  id: string
+  BOD: number
+  COD: number
+  Flow: number
+  PH: number
+  TSS: number
+  Timestamp: string
+  timestamp: Date
+}
 import { Button } from "@/components/ui/button"
 import { Calendar } from "@/components/ui/calendar"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
@@ -13,7 +24,7 @@ import { Label } from "@/components/ui/label"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -68,12 +79,9 @@ interface HistoryDataItem {
 export default function ReportsPage() {
   const [selectedDevice, setSelectedDevice] = useState("all")
   const [selectedReportType, setSelectedReportType] = useState("daily")
-  const [dateRange, setDateRange] = useState<{
-    from: Date | undefined
-    to: Date | undefined
-  }>({
-    from: new Date(new Date().setDate(new Date().getDate() - 30)),
-    to: new Date(),
+  const [dateRange, setDateRange] = useState<{ from: Date; to: Date }>({
+    from: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), // 30 days ago
+    to: new Date() // Today
   })
   const [selectedParameters, setSelectedParameters] = useState<string[]>(["pH", "BOD", "COD", "TSS", "Flow"])
   const [loading, setLoading] = useState(false)
@@ -92,11 +100,47 @@ export default function ReportsPage() {
   const barChartInstance = useRef<Chart | null>(null)
 
   const { devices } = useSensorData()
-  const { data: historyData, loading: historyLoading, error: historyError } = useRealtimeHistory("RPi001")
+  const { historicalData, loading: historyLoading, error: historyError } = useRealtimeHistory({
+    deviceId: selectedDevice === "all" ? "RPi001" : selectedDevice,
+    startDate: dateRange.from,
+    endDate: dateRange.to,
+  })
+  
+  // Ensure historyData is always an array of HistoricalReading
+  const historyData: HistoricalReading[] = Array.isArray(historicalData) ? historicalData : []
 
-  // Load reports on mount
+  // Format date for display with better error handling
+  const formatDate = (date: Date | string | null | undefined): string => {
+    if (!date) return 'N/A'
+    try {
+      const d = new Date(date)
+      return isNaN(d.getTime()) ? 'N/A' : d.toLocaleString(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+      })
+    } catch (error) {
+      console.error('Error formatting date:', date, error)
+      return 'N/A'
+    }
+  }
+
+  // Load reports and historical data on mount
   useEffect(() => {
     loadReports()
+
+    // Set default date range to last 7 days if not set
+    if (!dateRange.from) {
+      const from = new Date()
+      from.setDate(from.getDate() - 7)
+      setDateRange({
+        from,
+        to: new Date()
+      })
+    }
   }, [])
 
   // Update charts when report data changes
@@ -106,61 +150,75 @@ export default function ReportsPage() {
     }
   }, [reportData])
 
-  // Load reports from local storage or generate mock data
+  // Load reports from local storage
   const loadReports = () => {
     try {
       const savedReports = localStorage.getItem("wastewater_reports")
-      if (savedReports) {
-        const parsedReports = JSON.parse(savedReports)
-        // Convert string dates back to Date objects
-        const reportsWithDates = parsedReports.map((report: Record<string, unknown>) => ({
-          ...report,
-          createdAt: new Date(report.createdAt as string),
-        }))
-        setReports(reportsWithDates as Report[])
-      } else {
-        // Generate mock reports if none exist
-        const mockReports: Report[] = [
-          {
-            id: "RPT-001",
-            name: "Daily Operations Report",
-            type: "daily",
-            deviceId: "RPi001",
-            createdAt: new Date(2025, 3, 30, 12, 33, 21),
-            status: "completed",
-            fileSize: "1.2 MB",
-          },
-          {
-            id: "RPT-002",
-            name: "Weekly Performance Summary",
-            type: "weekly",
-            deviceId: "RPi001",
-            createdAt: new Date(2025, 3, 30, 12, 39, 23),
-            status: "completed",
-            fileSize: "3.5 MB",
-          },
-          {
-            id: "RPT-003",
-            name: "Monthly Compliance Report",
-            type: "compliance",
-            deviceId: "RPi001",
-            createdAt: new Date(2025, 3, 30, 14, 40, 35),
-            status: "completed",
-            fileSize: "5.8 MB",
-          },
-          {
-            id: "RPT-004",
-            name: "pH Exceedance Incident Report",
-            type: "incident",
-            deviceId: "RPi001",
-            createdAt: new Date(2025, 3, 30, 14, 46, 38),
-            status: "completed",
-            fileSize: "2.1 MB",
-          },
-        ]
-        setReports(mockReports)
-        localStorage.setItem("wastewater_reports", JSON.stringify(mockReports))
-      }
+      if (!savedReports) return
+
+      // Safely parse the saved reports
+      const parsedReports = JSON.parse(savedReports)
+      if (!Array.isArray(parsedReports)) return
+
+      // Convert string dates back to Date objects with proper type safety
+      const reportsWithDates = parsedReports.reduce<Report[]>((acc, item) => {
+        try {
+          // Skip if item is not an object
+          if (!item || typeof item !== 'object' || Array.isArray(item)) return acc
+          
+          // Create a new report with default values
+          const report: Report = {
+            id: '',
+            name: 'Unnamed Report',
+            type: 'daily',
+            deviceId: 'RPi001',
+            status: 'completed',
+            fileSize: '0 KB',
+            createdAt: new Date(),
+            data: [],
+            ...item, // Spread the saved properties
+          }
+          
+          // Ensure required fields have proper types
+          if (typeof report.id !== 'string') report.id = `report-${Date.now()}`
+          if (typeof report.name !== 'string') report.name = 'Unnamed Report'
+          if (typeof report.type !== 'string') report.type = 'daily'
+          if (typeof report.deviceId !== 'string') report.deviceId = 'RPi001'
+          if (typeof report.status !== 'string') report.status = 'completed'
+          if (typeof report.fileSize !== 'string') report.fileSize = '0 KB'
+          
+          // Parse dates
+          if (typeof report.createdAt === 'string') {
+            report.createdAt = new Date(report.createdAt)
+          } else if (!(report.createdAt instanceof Date)) {
+            report.createdAt = new Date()
+          }
+          
+          // Ensure data is an array of objects with proper types
+          if (!Array.isArray(report.data)) {
+            report.data = []
+          } else {
+            report.data = report.data.map(dataItem => {
+              if (!dataItem || typeof dataItem !== 'object' || Array.isArray(dataItem)) {
+                return { Timestamp: new Date().toISOString() }
+              }
+              return {
+                ...dataItem,
+                Timestamp: typeof dataItem.Timestamp === 'string' 
+                  ? dataItem.Timestamp 
+                  : new Date().toISOString()
+              }
+            })
+          }
+          
+          return [...acc, report]
+        } catch (error) {
+          console.error('Error processing report:', error)
+          return acc
+        }
+      }, [])
+      
+      setReports(reportsWithDates)
     } catch (error) {
       console.error("Error loading reports:", error)
       setError("Failed to load reports")
@@ -172,7 +230,8 @@ export default function ReportsPage() {
     const matchesDevice = selectedDevice === "all" || report.deviceId === selectedDevice
     const matchesType = selectedReportType === "all" || report.type === selectedReportType
     const matchesDate =
-      (!dateRange.from || report.createdAt >= dateRange.from) && (!dateRange.to || report.createdAt <= dateRange.to)
+      (!dateRange.from || (report.createdAt && new Date(report.createdAt) >= dateRange.from)) && 
+      (!dateRange.to || (report.createdAt && new Date(report.createdAt) <= dateRange.to))
 
     return matchesDevice && matchesType && matchesDate
   })
@@ -191,55 +250,25 @@ export default function ReportsPage() {
       if (!lineChartRef.current || !barChartRef.current) return
 
       // Prepare data for charts
-      const timestamps = data
-        .map((item) => item.Timestamp as string)
-        .slice(0, 10)
-        .reverse()
-
-      // Line chart for parameters over time
-      const lineChartData: ChartData = {
-        labels: timestamps,
-        datasets: selectedParameters.map((param) => {
-          const paramInfo = parameters.find((p) => p.name === param)
-          return {
-            label: param,
-            data: data
-              .map((item) => item[param])
-              .slice(0, 10)
-              .reverse(),
-            borderColor: paramInfo?.color || "#1a4e7e",
-            backgroundColor: (paramInfo?.color || "#1a4e7e") + "33", // Add transparency
-            tension: 0.3,
-            fill: false,
-          }
-        }),
-      }
-
-      // Bar chart for average values
-      const barChartData: ChartData = {
-        labels: selectedParameters,
-        datasets: [
-          {
-            label: "Average Values",
-            data: selectedParameters.map((param) => {
-              const values = data.map((item) => Number.parseFloat(item[param] as string)).filter((val) => !isNaN(val))
-              return values.length > 0 ? values.reduce((sum, val) => sum + val, 0) / values.length : 0
-            }),
-            backgroundColor: selectedParameters.map((param) => {
-              const paramInfo = parameters.find((p) => p.name === param)
-              return paramInfo?.color || "#1a4e7e"
-            }),
-            borderWidth: 1,
-          },
-        ],
-      }
+      const chartData = generateChartData(data)
 
       // Create line chart
       lineChartInstance.current = new Chart(lineChartRef.current, {
         type: "line",
-        data: lineChartData,
+        data: chartData,
         options: {
           responsive: true,
+          maintainAspectRatio: false,
+          animation: {
+            duration: 0 // Disable animations
+          },
+          transitions: {
+            active: {
+              animation: {
+                duration: 0 // Disable transitions
+              }
+            }
+          },
           plugins: {
             title: {
               display: true,
@@ -250,7 +279,7 @@ export default function ReportsPage() {
               },
             },
             legend: {
-              position: "top",
+              position: "top" as const,
             },
           },
           scales: {
@@ -274,9 +303,20 @@ export default function ReportsPage() {
       // Create bar chart
       barChartInstance.current = new Chart(barChartRef.current, {
         type: "bar",
-        data: barChartData,
+        data: generateBarChartData(data),
         options: {
           responsive: true,
+          maintainAspectRatio: false,
+          animation: {
+            duration: 0 // Disable animations
+          },
+          transitions: {
+            active: {
+              animation: {
+                duration: 0 // Disable transitions
+              }
+            }
+          },
           plugins: {
             title: {
               display: true,
@@ -312,6 +352,104 @@ export default function ReportsPage() {
     }
   }
 
+  // Type definition for chart data
+  interface ChartData {
+    labels: string[]
+    datasets: Array<{
+      label: string
+      data: number[]
+      borderColor: string
+      backgroundColor: string
+      tension: number
+      fill: boolean
+    }>
+  }
+
+  // Generate chart data based on selected parameters and date range
+  const generateChartData = (data: Record<string, unknown>[]): ChartData => {
+    if (!data || data.length === 0) return { labels: [], datasets: [] }
+
+    // Sort data by timestamp in ascending order
+    const sortedData = [...data].sort((a, b) => {
+      const timeA = new Date(a.Timestamp as string).getTime()
+      const timeB = new Date(b.Timestamp as string).getTime()
+      return timeA - timeB
+    })
+
+    // For better performance with large datasets, sample the data if needed
+    const maxDataPoints = 100 // Maximum number of points to display
+    let displayData = sortedData
+    
+    if (sortedData.length > maxDataPoints) {
+      // Sample the data to show a representative set of points
+      const step = Math.ceil(sortedData.length / maxDataPoints)
+      displayData = sortedData.filter((_, index) => index % step === 0)
+    }
+
+    const labels = displayData.map((item) => {
+      try {
+        const date = new Date(item.Timestamp as string)
+        return date.toLocaleTimeString() // Show time for better readability
+      } catch (e) {
+        return 'N/A'
+      }
+    })
+    
+    const datasets = selectedParameters.map((param) => {
+      const paramConfig = parameters.find((p) => p.name === param)
+      return {
+        label: param,
+        data: displayData.map((item) => {
+          const value = Number(item[param])
+          return isNaN(value) ? 0 : value
+        }),
+        borderColor: paramConfig?.color || "#1a4e7e",
+        backgroundColor: `${paramConfig?.color || '#1a4e7e'}33`,
+        borderWidth: 1.5,
+        pointRadius: 1.5,
+        tension: 0.1,
+        fill: false,
+      }
+    })
+
+    return { 
+      labels, 
+      datasets,
+    }
+  }
+
+  // Generate bar chart data for parameter comparisons
+  const generateBarChartData = (data: Record<string, unknown>[]): ChartData => {
+    if (!data || data.length === 0) return { labels: [], datasets: [] }
+
+    // Calculate averages for each parameter
+    const averages = selectedParameters.map((param) => {
+      const values = data
+        .map((item) => {
+          const value = item[param]
+          return typeof value === 'number' ? value : null
+        })
+        .filter((val): val is number => val !== null)
+      
+      return values.length > 0 ? values.reduce((sum, val) => sum + val, 0) / values.length : 0
+    })
+
+    return {
+      labels: selectedParameters,
+      datasets: [
+        {
+          label: "Average Values",
+          data: averages,
+          backgroundColor: selectedParameters.map((param) => {
+            const paramConfig = parameters.find((p) => p.name === param)
+            return paramConfig?.color || "#1a4e7e"
+          }),
+          borderWidth: 1,
+        },
+      ],
+    }
+  }
+
   // Generate a new report
   const handleGenerateReport = async () => {
     try {
@@ -325,65 +463,65 @@ export default function ReportsPage() {
       const deviceId = selectedDevice === "all" ? "RPi001" : selectedDevice
 
       // Prepare the report data
-      let generatedReportData: Record<string, unknown>[] = []
+      let generatedReportData: Array<{
+        Timestamp: string
+        BOD: number
+        COD: number
+        Flow: number
+        PH: number
+        TSS: number
+      }> = []
 
-      // Use history data if available
+      // Use history data from Firebase
       if (historyData && historyData.length > 0) {
-        // Filter by date range if provided
-        const filteredData = historyData.filter((item: HistoryDataItem) => {
-          const itemDate = new Date(item.timestamp)
-          return (!dateRange.from || itemDate >= dateRange.from) && (!dateRange.to || itemDate <= dateRange.to)
-        })
-
         // Format the data for the report
-        generatedReportData = filteredData.map((item: HistoryDataItem) => {
-          const formattedItem: Record<string, unknown> = {
-            Timestamp:
-              typeof item.timestamp === "string"
-                ? new Date(item.timestamp).toLocaleString()
-                : (item.timestamp as Date).toLocaleString(),
-          }
-
-          // Add selected parameters
-          selectedParameters.forEach((param) => {
-            const paramKey = param.toLowerCase()
-            formattedItem[param] = item[paramKey] !== undefined ? item[paramKey] : "N/A"
-          })
-
-          return formattedItem
-        })
-      } else {
-        // Generate mock data if no history data
-        generatedReportData = Array.from({ length: 20 }, (_, i) => {
-          const date = new Date()
-          date.setHours(date.getHours() - i)
-
-          const item: Record<string, unknown> = {
-            Timestamp: date.toLocaleString(),
-          }
-
-          selectedParameters.forEach((param) => {
-            const paramInfo = parameters.find((p) => p.name === param)
-            if (paramInfo) {
-              const min = paramInfo.min
-              const max = paramInfo.max
-              item[param] = (min + Math.random() * (max - min)).toFixed(1)
+        generatedReportData = historyData
+          .filter(item => {
+            if (!dateRange.from || !dateRange.to) return true;
+            try {
+              const itemDate = new Date(item.timestamp);
+              return itemDate >= dateRange.from && itemDate <= dateRange.to;
+            } catch (e) {
+              console.error('Error processing date:', item.timestamp, e);
+              return false;
             }
           })
+          .sort((a, b) => {
+            try {
+              return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
+            } catch (e) {
+              return 0;
+            }
+          })
+          .map((item) => ({
+            Timestamp: formatDate(item.timestamp || new Date()),
+            BOD: typeof item.BOD === 'number' ? item.BOD : 0,
+            COD: typeof item.COD === 'number' ? item.COD : 0,
+            Flow: typeof item.Flow === 'number' ? item.Flow : 0,
+            PH: typeof item.PH === 'number' ? item.PH : 0,
+            TSS: typeof item.TSS === 'number' ? item.TSS : 0,
+          }));
 
-          return item
-        })
+        if (generatedReportData.length === 0) {
+          throw new Error("No data available for the selected date range");
+        }
+      } else {
+        throw new Error("No historical data available");
       }
 
-      // Create a new report
+      // Calculate file size based on data length (rough estimate)
+      const fileSizeInKB = Math.round(JSON.stringify(generatedReportData).length / 1024 * 100) / 100
+      const fileSize = fileSizeInKB > 1024 
+        ? `${(fileSizeInKB / 1024).toFixed(1)} MB` 
+        : `${fileSizeInKB.toFixed(1)} KB`
       const newReport: Report = {
-        id: `RPT-${reports.length + 1}`.padStart(7, "0"),
+        id: `RPT-${Date.now()}`,
         name: `${reportTypeName} - ${new Date().toLocaleDateString()}`,
         type: selectedReportType,
         deviceId,
         createdAt: new Date(),
         status: "completed",
-        fileSize: `${(Math.random() * 5 + 1).toFixed(1)} MB`,
+        fileSize,
         data: generatedReportData,
       }
 
@@ -410,12 +548,12 @@ export default function ReportsPage() {
     }
   }
 
-  // Handle parameter checkbox change
-  const handleParameterChange = (param: string, checked: boolean) => {
+  // Handle parameter selection change
+  const handleParameterChange = (parameter: string, checked: boolean) => {
     if (checked) {
-      setSelectedParameters([...selectedParameters, param])
+      setSelectedParameters([...selectedParameters, parameter])
     } else {
-      setSelectedParameters(selectedParameters.filter((p) => p !== param))
+      setSelectedParameters(selectedParameters.filter((p) => p !== parameter))
     }
   }
 
@@ -525,55 +663,23 @@ export default function ReportsPage() {
       // Set report data to create charts
       setReportData(reportDataToUse)
 
-      // Download after a short delay to ensure charts are rendered
-      setTimeout(() => {
-        try {
-          const reportTypeName = reportTypes.find((type) => type.id === report.type)?.name || report.type
+      // Get the report type name
+      const reportTypeName = reportTypes.find((type) => type.id === report.type)?.name || report.type
 
-          // Get chart canvases
-          const chartData = []
-
-          if (lineChartRef.current) {
-            chartData.push({
-              canvas: lineChartRef.current,
-              title: "Parameter Trends Over Time",
-              description: "This chart shows how parameter values change over time.",
-            })
-          }
-
-          if (barChartRef.current) {
-            chartData.push({
-              canvas: barChartRef.current,
-              title: "Average Parameter Values",
-              description: "This chart shows the average value for each parameter.",
-            })
-          }
-
-          // Export the report
-          DataExportService.exportReport(reportDataToUse, reportTypeName, format, {
-            deviceId: report.deviceId,
-            dateRange: {
-              from: new Date(report.createdAt.getTime() - 30 * 24 * 60 * 60 * 1000),
-              to: report.createdAt,
-            },
-            chartData,
-          })
-
-          toast({
-            title: "Download Started",
-            description: `Your report is being downloaded as ${format.toUpperCase()}.`,
-            duration: 3000,
-          })
-        } catch (error) {
-          console.error("Error downloading report:", error)
-          toast({
-            title: "Download Failed",
-            description: "Failed to download report. Please try again.",
-            variant: "destructive",
-            duration: 3000,
-          })
+      // Export the report with simplified options
+      DataExportService.exportReport(reportDataToUse, reportTypeName, format, {
+        deviceId: report.deviceId,
+        dateRange: {
+          from: new Date(report.createdAt.getTime() - 30 * 24 * 60 * 60 * 1000),
+          to: report.createdAt,
         }
-      }, 500) // Short delay to ensure charts are rendered
+      })
+
+      toast({
+        title: "Download Started",
+        description: `Your report is being downloaded as ${format.toUpperCase()}.`,
+        duration: 3000,
+      })
     } catch (error) {
       console.error("Error preparing report data:", error)
       toast({
@@ -614,8 +720,20 @@ export default function ReportsPage() {
             </CardHeader>
             <CardContent className="space-y-6">
               {error && (
-                <Alert variant="destructive">
-                  <AlertDescription>{error}</AlertDescription>
+                <Alert variant="destructive" className="mb-6">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertTitle>Error Generating Report</AlertTitle>
+                  <AlertDescription className="flex flex-col gap-2">
+                    <span>{error}</span>
+                    {historyLoading ? (
+                      <span className="flex items-center gap-2">
+                        <RefreshCw className="h-3 w-3 animate-spin" />
+                        Loading historical data...
+                      </span>
+                    ) : historyError ? (
+                      <span className="text-sm">Failed to load historical data: {historyError}</span>
+                    ) : null}
+                  </AlertDescription>
                 </Alert>
               )}
               <div className="grid gap-4 md:grid-cols-2">
