@@ -67,20 +67,22 @@ export function useLiveData(deviceId?: string) {
     setTimeUntilRefresh(360)
   }
 
-  // Countdown timer effect
+  // Countdown timer effect - updates every minute
   useEffect(() => {
     if (timerRef.current) {
       clearInterval(timerRef.current)
     }
 
+    // Initialize with the full 6 minutes (360 seconds)
+    setTimeUntilRefresh(360)
+
+    // Update every minute (60000ms) instead of every second
     timerRef.current = setInterval(() => {
       setTimeUntilRefresh((prev) => {
-        if (prev <= 1) {
-          return 360 // Reset to 6 minutes when it reaches 0
-        }
-        return prev - 1
+        const newValue = prev - 60 // Decrease by 60 seconds (1 minute)
+        return newValue <= 0 ? 360 : newValue // Reset to 6 minutes when it reaches 0
       })
-    }, 1000)
+    }, 60000) // Update every minute
 
     return () => {
       if (timerRef.current) {
@@ -121,12 +123,12 @@ export function useLiveData(deviceId?: string) {
           id: docSnapshot.id,
           deviceId: deviceId,
           timestamp: data.timestamp instanceof Timestamp ? data.timestamp.toDate() : new Date(data.timestamp),
-          pH: data.pH || 0,
+          pH: data.PH || 0,
           BOD: data.BOD || 0,
           COD: data.COD || 0,
           TSS: data.TSS || 0,
-          flow: data.flow || 0,
-          temperature: data.temperature || 25,
+          flow: data.Flow || 0,
+          temperature: data.Temperature || 25,
           DO: data.DO || 6,
           conductivity: data.conductivity || 1000,
           turbidity: data.turbidity || 2,
@@ -189,8 +191,8 @@ export function useLiveData(deviceId?: string) {
 
     try {
       // Reference to the device data in Realtime Database - using the specific path
-      const deviceRef = ref(realtimeDb, `HMI_Sensor_Data/${deviceId}/Live`)
-      console.log("Setting up listener at path:", `HMI_Sensor_Data/${deviceId}/Live`)
+      const deviceRef = ref(realtimeDb, `Clients/TyWRS0Zyusc3tbtcU0PcBPdXSjb2/devices/RPi001/Live`)
+      console.log("Setting up listener at path:", `Clients/TyWRS0Zyusc3tbtcU0PcBPdXSjb2/devices/RPi001/Live`)
 
       const unsubscribe = onValue(
         deviceRef,
